@@ -396,12 +396,21 @@ def _fmt(n):
         if n >= 1_000:     return f"{n/1_000:.0f}K"
     return str(n)
 
+def _pg_connect():
+    """Connect to Postgres via Unix socket (peer auth) or WILLOW_DB_URL if set."""
+    import psycopg2
+    dsn = os.environ.get("WILLOW_DB_URL", "")
+    if dsn:
+        return psycopg2.connect(dsn)
+    return psycopg2.connect(
+        dbname=os.environ.get("WILLOW_PG_DB", "willow"),
+        user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
+    )
+
+
 def fetch_postgres():
     try:
-        import psycopg2
-        dsn = os.environ.get("WILLOW_DB_URL", "")
-        if not dsn: return
-        conn = psycopg2.connect(dsn)
+        conn = _pg_connect()
         cur  = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM public.knowledge")
         k = cur.fetchone()[0]
@@ -410,10 +419,10 @@ def fetch_postgres():
         cur.execute("SELECT COUNT(*) FROM public.entities")
         en = cur.fetchone()[0]
         try:
-            cur.execute("SELECT status, COUNT(*) FROM kart.kart_task_queue GROUP BY status")
+            cur.execute("SELECT status, COUNT(*) FROM kart_task_queue GROUP BY status")
             kart = dict(cur.fetchall())
-            cur.execute("""SELECT id, status, command, created_at
-                           FROM kart.kart_task_queue
+            cur.execute("""SELECT task_id, status, task, created_at
+                           FROM kart_task_queue
                            ORDER BY created_at DESC LIMIT 20""")
             tasks = [{"id": r[0], "status": r[1], "cmd": r[2][:40], "ts": str(r[3])[:16]}
                      for r in cur.fetchall()]
@@ -1010,7 +1019,7 @@ def draw_logs_full(left_win, right_win):
 _SETTINGS = [
     ("refresh_interval",  str(REFRESH_INTERVAL), "seconds between data refreshes"),
     ("sway_interval",     str(SWAY_INTERVAL),    "seconds per animation frame"),
-    ("willow_db_url",     "env:WILLOW_DB_URL",   "Postgres connection string"),
+    ("willow_db_url",     "env:WILLOW_DB_URL",   "Postgres DSN (optional — Unix socket used by default)"),
     ("safe_root",         "env:WILLOW_SAFE_ROOT", "SAFE manifests root path"),
     ("ollama_host",       "localhost:11434",      "Ollama API endpoint"),
 ]
