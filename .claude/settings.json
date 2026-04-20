@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__willow__willow_status",
+      "mcp__willow__willow_handoff_latest",
+      "mcp__willow__willow_handoff_search",
+      "mcp__willow__store_list",
+      "mcp__willow__store_put",
+      "mcp__willow__store_get",
+      "mcp__willow__store_search",
+      "mcp__willow__store_search_all",
+      "mcp__willow__willow_knowledge_ingest",
+      "mcp__willow__willow_knowledge_search",
+      "mcp__willow__willow_query",
+      "mcp__willow__willow_chat",
+      "mcp__willow__willow_journal",
+      "mcp__willow__willow_handoff_rebuild",
+      "mcp__willow__store_update",
+      "mcp__willow__store_add_edge",
+      "mcp__willow__store_edges_for",
+      "mcp__willow__willow_system_status",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash",
+      "Skill"
+    ],
+    "defaultMode": "default"
+  },
+  "env": {
+    "WILLOW_AGENT_NAME": "heimdallr",
+    "WILLOW_APP_ID": "heimdallr"
+  }
+}
