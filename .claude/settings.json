@@ -1,4 +1,7 @@
 {
+  "env": {
+    "WILLOW_AGENT_NAME": "willow-dashboard"
+  },
   "permissions": {
     "allow": [
       "mcp__willow__willow_status",
