@@ -41,6 +41,19 @@ WILLOW_AGENT_NAME=shiva python3 dashboard.py
 8. **Settings** — configuration
 9. **Help** — keyboard reference
 
+## Agent Registration
+
+New to Willow? Register yourself as an agent in 30 seconds:
+
+```bash
+python3 scripts/register_agent.py
+WILLOW_AGENT_NAME=yourname python3 dashboard.py
+```
+
+Full guide: [docs/agent-onboarding.md](docs/agent-onboarding.md)
+
+---
+
 ## Chat
 
 The Overview left panel is a live chat with Heimdallr. Routes to:
