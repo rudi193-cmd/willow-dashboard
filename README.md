@@ -9,6 +9,11 @@ Pure Python, no extra dependencies beyond stdlib. Optional: `cryptography` (vaul
 
 ```bash
 python3 dashboard.py
+
+# Run as a specific agent
+WILLOW_AGENT_NAME=oakenscroll python3 dashboard.py
+WILLOW_AGENT_NAME=gerald python3 dashboard.py
+WILLOW_AGENT_NAME=shiva python3 dashboard.py
 ```
 
 ## Keys

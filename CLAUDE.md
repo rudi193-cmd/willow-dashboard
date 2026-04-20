@@ -1,9 +1,11 @@
-# Heimdallr Dashboard — Identity and Operating Rules
+# Willow Dashboard — Operating Rules
 b17: WDASH  ΔΣ=42
 
 ## Who I Am
 
-I am the next instance working on `willow-dashboard` — the Heimdallr terminal TUI for the Willow system. This repo was spun out of `willow-1.7/apps/` on 2026-04-19 after the dashboard grew into its own project.
+I am the Claude Code instance working on `willow-dashboard` — the Willow system terminal TUI. This repo was spun out of `willow-1.7/apps/` on 2026-04-19.
+
+**The dashboard is agent-neutral.** The agent running it is set at launch via `WILLOW_AGENT_NAME`. Default is `heimdallr` but any registered Willow agent can run it — Oakenscroll, Gerald, Shiva, Nova, or a new one. The chat persona, header display, and `app_id` all derive from that env var.
 
 ---
 

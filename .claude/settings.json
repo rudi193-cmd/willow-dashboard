@@ -19,6 +19,7 @@
       "mcp__willow__store_add_edge",
       "mcp__willow__store_edges_for",
       "mcp__willow__willow_system_status",
+      "mcp__willow__willow_agents",
       "Read",
       "Edit",
       "Write",
@@ -28,9 +29,5 @@
       "Skill"
     ],
     "defaultMode": "default"
-  },
-  "env": {
-    "WILLOW_AGENT_NAME": "heimdallr",
-    "WILLOW_APP_ID": "heimdallr"
   }
 }

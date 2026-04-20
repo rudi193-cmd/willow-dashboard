@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Willow System Dashboard — terminal UI
-apps/dashboard.py  b17: DASH2  ΔΣ=42
+dashboard.py  b17: WDASH  ΔΣ=42
 
-Run: python3 apps/dashboard.py
-Keys: Tab=focus  ←→=page  ↑↓=navigate  Enter=expand  Esc=back  1-7=jump  /=search  r=refresh  q=quit
+Run: python3 dashboard.py
+Set WILLOW_AGENT_NAME to choose which agent runs the session (default: heimdallr).
+Keys: Tab=focus  ←→=page  ↑↓=navigate  Enter=expand  Esc=back  1-9=jump  r=refresh  q=quit
 """
 import curses
 import threading
@@ -146,12 +147,25 @@ class NavState:
 
 NAV = NavState()
 
-# ── Heimdallr system prompt ───────────────────────────────────────────────────
-HEIMDALLR_SYSTEM = """\
-You are Heimdallr. Watchman. Gatekeeper of the Willow system. Claude Code CLI.
-You stand at the Bifrost — the crossing point between the professors and the system.
+# ── Agent identity — read from env, resolved at runtime ──────────────────────
+AGENT_NAME = os.environ.get("WILLOW_AGENT_NAME", "heimdallr")
+APP_ID      = os.environ.get("WILLOW_APP_ID", AGENT_NAME)
 
-Architecture you know:
+# Known agent roles — supplemented at runtime from willow_agents registry
+_AGENT_ROLES = {
+    "heimdallr":  "Watchman. Gatekeeper. Stands at the Bifrost.",
+    "gerald":     "Acting Dean. Philosophical. Holds the faculty together.",
+    "oakenscroll":"Scroll-keeper. Long-form records. Custodian of history.",
+    "shiva":      "Bridge Ring. SAFE face. Infrastructure destruction and renewal.",
+    "nova":       "Exploration. New territory. First contact.",
+    "jeles":      "Librarian. Special collections. Verification.",
+    "riggs":      "Applied reality engineering. Gets things done.",
+    "alexis":     "Analysis. Structured reasoning. Pattern recognition.",
+    "ada":        "Systems admin. Continuity. Keeps things running.",
+}
+
+_WILLOW_CONTEXT = """\
+Willow system architecture:
 - SAP: portless auth gate, 49 tools, PGP-hardened, no HTTP
 - SOIL: SQLite local store (78 collections, 2M+ records)
 - LOAM: Postgres KB (68K atoms, 1M edges, unix socket peer auth)
@@ -159,8 +173,14 @@ Architecture you know:
 - Yggdrasil: local SLM trained on Willow operational patterns
 - SAFE: PGP-signed manifests for every professor app
 - Faculty: Ada, Gerald, Jeles, Nova, Binder, Riggs, Hanz, Steve, Oakenscroll, Copenhagen, Ofshield, Alexis
-
 Rules: Be terse. Name gaps explicitly. No padding. No apology. ΔΣ=42"""
+
+def _build_system_prompt(agent_name=None):
+    name = agent_name or AGENT_NAME
+    role = _AGENT_ROLES.get(name, "Willow system agent.")
+    return f"You are {name.capitalize()}. {role}\n\n{_WILLOW_CONTEXT}"
+
+AGENT_SYSTEM = _build_system_prompt()
 
 # ── Chat state ────────────────────────────────────────────────────────────────
 class ChatState:
@@ -278,7 +298,7 @@ def send_chat(user_msg):
         CHAT.stream  = ""
         CHAT.error   = None
 
-    messages = [{"role": "system", "content": HEIMDALLR_SYSTEM}] + CHAT.visible()
+    messages = [{"role": "system", "content": AGENT_SYSTEM}] + CHAT.visible()
 
     # 1. Try Ollama streaming
     try:
@@ -523,9 +543,10 @@ def draw_willow_hero(win):
     # Title row
     safe_addstr(win, 0, 2, "W I L L O W", curses.color_pair(C_BLUE) | curses.A_BOLD)
     safe_addstr(win, 0, 14, "● LIVE", curses.color_pair(C_GREEN))
+    safe_addstr(win, 0, 22, f"[ {AGENT_NAME} ]", curses.color_pair(C_AMBER))
     # Sun top-right
     sun_x = w - 4
-    if sun_x > 20:
+    if sun_x > 30:
         safe_addstr(win, 0, sun_x, "☀", curses.color_pair(C_AMBER) | curses.A_BOLD)
 
     # Tree — anchored left
@@ -567,7 +588,7 @@ def draw_willow_hero(win):
             except curses.error: pass
 
     # Agent name — sits on grass line, right-justified
-    agent = "Heimdallr · Sonnet 4.6"
+    agent = f"{AGENT_NAME.capitalize()} · Sonnet 4.6"
     safe_addstr(win, _TREE_H, w - len(agent) - 2, agent, curses.color_pair(C_DIM))
 
     draw_hline(win, _TREE_H + 2, curses.color_pair(C_DIM))
@@ -675,7 +696,7 @@ def draw_overview_left(win):
             except curses.error: pass
     else:
         safe_addstr(win, input_row, 1, "▸", curses.color_pair(C_DIM))
-        safe_addstr(win, input_row, 3, "ask heimdallr...", curses.color_pair(C_DIM) | curses.A_DIM)
+        safe_addstr(win, input_row, 3, f"ask {AGENT_NAME}...", curses.color_pair(C_DIM) | curses.A_DIM)
 
     draw_stat_strip(win)
     draw_panel_border(win, focused)
