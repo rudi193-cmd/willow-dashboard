@@ -175,9 +175,24 @@ Willow system architecture:
 - Faculty: Ada, Gerald, Jeles, Nova, Binder, Riggs, Hanz, Steve, Oakenscroll, Copenhagen, Ofshield, Alexis
 Rules: Be terse. Name gaps explicitly. No padding. No apology. ΔΣ=42"""
 
+def _load_agents():
+    """Merge hardcoded roles with ~/.willow/agents.json local overrides."""
+    agents = dict(_AGENT_ROLES)
+    override = Path.home() / ".willow" / "agents.json"
+    if override.exists():
+        try:
+            for entry in json.loads(override.read_text()):
+                agents[entry["name"]] = entry.get("role", "Willow agent.")
+        except Exception:
+            pass
+    return agents
+
+ALL_AGENTS = _load_agents()
+
+
 def _build_system_prompt(agent_name=None):
     name = agent_name or AGENT_NAME
-    role = _AGENT_ROLES.get(name, "Willow system agent.")
+    role = ALL_AGENTS.get(name, "Willow system agent.")
     return f"You are {name.capitalize()}. {role}\n\n{_WILLOW_CONTEXT}"
 
 AGENT_SYSTEM = _build_system_prompt()
@@ -1014,6 +1029,8 @@ def draw_settings_right(win):
     win.erase()
     safe_addstr(win, 0, 1, "Configuration", curses.color_pair(C_HEADER) | curses.A_BOLD)
     focused = NAV.focus == "right"
+
+    # Config settings
     for i, (key, val, desc) in enumerate(_SETTINGS):
         y = 2 + i * 3
         if y + 2 >= h: break
@@ -1022,6 +1039,19 @@ def draw_settings_right(win):
         safe_addstr(win, y,     2, f" {key} ", k_attr)
         safe_addstr(win, y + 1, 4, val[:w-6],  curses.color_pair(C_BLUE))
         safe_addstr(win, y + 2, 4, desc[:w-6], curses.color_pair(C_DIM) | curses.A_DIM)
+
+    # Agent list
+    agent_y = 2 + len(_SETTINGS) * 3 + 1
+    if agent_y < h - 2:
+        safe_addstr(win, agent_y, 1, "── Registered Agents ──", curses.color_pair(C_AMBER))
+        for i, (name, role) in enumerate(ALL_AGENTS.items()):
+            y = agent_y + 1 + i
+            if y >= h - 1: break
+            active = name == AGENT_NAME
+            attr = curses.color_pair(C_GREEN) | curses.A_BOLD if active else curses.color_pair(C_DIM)
+            marker = "▶ " if active else "  "
+            safe_addstr(win, y, 2, f"{marker}{name:<14} {role[:w-20]}", attr)
+
     draw_panel_border(win, focused)
     win.noutrefresh()
 
