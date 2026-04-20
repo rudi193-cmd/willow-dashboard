@@ -1159,18 +1159,23 @@ def main(stdscr):
                 if key == 27:                        # Esc — unfocus
                     NAV.focus = None
                     with CHAT.lock: CHAT.input = ""
+                    continue
                 elif key in (curses.KEY_ENTER, 10, 13):
                     with CHAT.lock:
                         msg = CHAT.input.strip()
                         CHAT.input = ""
                     if msg and not CHAT.waiting:
                         threading.Thread(target=send_chat, args=(msg,), daemon=True).start()
+                    continue
                 elif key in (curses.KEY_BACKSPACE, 127):
                     with CHAT.lock: CHAT.input = CHAT.input[:-1]
-                elif key == 9:                       # Tab — move focus
+                    continue
+                elif key == 9:                       # Tab — move focus to right panel
                     NAV.tab()
+                    continue
                 elif 32 <= key <= 126:
                     with CHAT.lock: CHAT.input += chr(key)
+                    continue
 
             # ── Search mode ──
             if NAV.searching:
