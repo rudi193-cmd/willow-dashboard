@@ -21,6 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import skins
+import cards as card_mod
+
 # ── Color pairs ──────────────────────────────────────────────────────────────
 C_DEFAULT  = 0
 C_BLUE     = 1
@@ -138,7 +141,9 @@ class NavState:
         self.focus     = None        # None | "left" | "right"
         self.card_idx  = 0
         self.expanded  = False
-        self.scroll    = 0           # left panel log scroll
+        self.scroll      = 0         # left panel log scroll
+        self.card_scroll = 0         # right panel grid scroll top row
+        self.expand_row  = 0         # selected row inside expanded card
         self.search    = ""
         self.searching = False
     def tab(self):
@@ -146,6 +151,14 @@ class NavState:
         self.expanded = False
 
 NAV = NavState()
+
+# ── Card catalog — loaded from SOIL at startup and on refresh ────────────────
+_CARDS: list = []  # list[card_mod.CardDef]
+
+def _load_cards() -> None:
+    global _CARDS
+    card_mod.seed_cards()
+    _CARDS = card_mod.load_cards()
 
 # ── Agent identity — read from env, resolved at runtime ──────────────────────
 AGENT_NAME = os.environ.get("WILLOW_AGENT_NAME", "heimdallr")
@@ -727,39 +740,17 @@ def draw_overview_left(win):
     win.noutrefresh()
 
 def draw_overview_right(win):
-    h, w = win.getmaxyx()
-    win.erase()
-    safe_addstr(win, 0, 1, "System Cards", curses.color_pair(C_HEADER) | curses.A_BOLD)
-    add_lbl = "+ add"
-    safe_addstr(win, 0, w - len(add_lbl) - 2, add_lbl, curses.color_pair(C_DIM))
-    rows, cols = 5, 2
-    card_h = max(4, (h - 1) // rows)
-    card_w = max(10, (w - 1) // cols)
-    with DATA.lock:
-        ygg_v  = DATA.ollama_ygg; ygg_run = DATA.ollama_running
-        kp     = DATA.kart_pending; kd = DATA.kart_done
-        kb     = DATA.pg_knowledge; edges = DATA.pg_edges
-        mfp    = DATA.manifests_pass; mft = DATA.manifests_total
-    cards = [
-        ("Yggdrasil",  ygg_v,  f"{'running' if ygg_run else 'down'}",        "green" if ygg_run else "red"),
-        ("Kart Queue", kp,     f"pending · {kd} done",                        "amber" if kp not in ("0","—") else "green"),
-        ("SAP Tools",  "49",   "all live · portless",                         "blue"),
-        ("Knowledge",  kb,     f"atoms · {edges} edges",                      "blue"),
-        ("Agents",     "6",    "heimdallr · kart +4",                         "blue"),
-        ("/Skills",    "34",   "active · 8 archived",                         "blue"),
-        ("Postgres",   "UP",   "unix socket · peer auth",                     "green"),
-        ("SAFE Mfsts", mfp,    f"signed / {mft} total",                       "blue"),
-        ("Fleet",      "3",    "groq · cerebras · sambanova",                 "blue"),
-        ("",           "+",    "add card",                                    "dim"),
-    ]
     focused = NAV.focus == "right"
-    for i, (label, value, sub, state) in enumerate(cards):
-        row, col = i // cols, i % cols
-        y = 1 + row * card_h
-        x = col * card_w
-        if y + card_h > h or x + card_w > w: continue
-        selected = focused and i == NAV.card_idx
-        _draw_card(win, y, x, card_h, card_w, label, value, sub, state, selected)
+    enabled = _CARDS
+    total_slots = len(enabled) + 1  # +1 for + card
+
+    if NAV.expanded and focused and 0 <= NAV.card_idx < len(enabled):
+        card = enabled[NAV.card_idx]
+        row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row)
+        NAV._expand_total = row_count
+    else:
+        NAV.card_scroll = card_mod.draw_card_grid(win, enabled, NAV.card_idx, NAV.card_scroll)
+
     draw_panel_border(win, focused)
     win.noutrefresh()
 
@@ -1140,19 +1131,8 @@ def main(stdscr):
     stdscr.nodelay(True)
     stdscr.timeout(50)
 
-    if curses.has_colors():
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(C_BLUE,   curses.COLOR_BLUE,   -1)
-        curses.init_pair(C_GREEN,  curses.COLOR_GREEN,  -1)
-        curses.init_pair(C_AMBER,  curses.COLOR_YELLOW, -1)
-        curses.init_pair(C_DIM,    curses.COLOR_WHITE,  -1)
-        curses.init_pair(C_HEADER, curses.COLOR_WHITE,  -1)
-        curses.init_pair(C_PILL,   curses.COLOR_CYAN,   -1)
-        curses.init_pair(C_RED,    curses.COLOR_RED,    -1)
-        brown = 130 if curses.COLORS >= 256 else curses.COLOR_YELLOW
-        curses.init_pair(C_BROWN,  brown,               -1)
-        curses.init_pair(C_SELECT, curses.COLOR_CYAN,   -1)
+    skins.init(stdscr)
+    _load_cards()
 
     stop_evt = threading.Event()
     t = threading.Thread(target=background_refresh, args=(stop_evt,), daemon=True)
@@ -1208,6 +1188,7 @@ def main(stdscr):
                     break
                 elif key == ord('r'):
                     threading.Thread(target=refresh_all, daemon=True).start()
+                    threading.Thread(target=_load_cards, daemon=True).start()
                     DATA.push_log("manual refresh")
                 elif key == ord('/'):
                     NAV.searching = True; NAV.search = ""
@@ -1217,7 +1198,23 @@ def main(stdscr):
                     if NAV.expanded: NAV.expanded = False
                     else: NAV.focus = None
                 elif key in (curses.KEY_ENTER, 10, 13):
-                    NAV.expanded = not NAV.expanded
+                    if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
+                        total_slots = len(_CARDS) + 1
+                        if NAV.card_idx >= len(_CARDS):
+                            # + card — seed creation prompt in chat
+                            with CHAT.lock:
+                                CHAT.input = ""
+                            threading.Thread(
+                                target=send_chat,
+                                args=("I'd like to add a new card to my dashboard.",),
+                                daemon=True,
+                            ).start()
+                            NAV.focus = "left"
+                        else:
+                            NAV.expanded = not NAV.expanded
+                            NAV.expand_row = 0
+                    else:
+                        NAV.expanded = not NAV.expanded
                 elif key == curses.KEY_RESIZE:
                     stdscr.clear(); rebuild()
 
@@ -1231,27 +1228,40 @@ def main(stdscr):
                     if NAV.focus == "left" or NAV.page == PAGE_LOGS:
                         NAV.scroll = max(0, NAV.scroll - 1)
                     elif NAV.focus == "right":
-                        NAV.card_idx = max(0, NAV.card_idx - 2)  # move up a row
+                        if NAV.expanded:
+                            NAV.expand_row = max(0, NAV.expand_row - 1)
+                        else:
+                            gcols = skins.ACTIVE.grid_columns
+                            NAV.card_idx = max(0, NAV.card_idx - gcols)
 
                 elif key == curses.KEY_DOWN:
                     if NAV.focus == "left" or NAV.page == PAGE_LOGS:
                         with DATA.lock: total = len(DATA.log)
                         NAV.scroll = min(max(0, total - 1), NAV.scroll + 1)
                     elif NAV.focus == "right":
-                        NAV.card_idx += 2  # move down a row
+                        if NAV.expanded:
+                            limit = getattr(NAV, "_expand_total", 0)
+                            NAV.expand_row = min(max(0, limit - 1), NAV.expand_row + 1)
+                        else:
+                            gcols = skins.ACTIVE.grid_columns
+                            top = len(_CARDS)  # max valid idx is + card
+                            NAV.card_idx = min(top, NAV.card_idx + gcols)
 
                 elif key == curses.KEY_LEFT:
-                    if NAV.focus == "right":
-                        if NAV.card_idx % 2 == 1:
-                            NAV.card_idx -= 1  # move to left column
+                    if NAV.focus == "right" and not NAV.expanded:
+                        gcols = skins.ACTIVE.grid_columns
+                        if NAV.card_idx % gcols > 0:
+                            NAV.card_idx -= 1
                     elif NAV.focus is None:
                         NAV.page = (NAV.page - 1) % len(PAGE_NAMES)
                         NAV.card_idx = 0; NAV.expanded = False; NAV.scroll = 0
 
                 elif key == curses.KEY_RIGHT:
-                    if NAV.focus == "right":
-                        if NAV.card_idx % 2 == 0:
-                            NAV.card_idx += 1  # move to right column
+                    if NAV.focus == "right" and not NAV.expanded:
+                        gcols = skins.ACTIVE.grid_columns
+                        top = len(_CARDS)
+                        if NAV.card_idx % gcols < gcols - 1 and NAV.card_idx < top:
+                            NAV.card_idx += 1
                     elif NAV.focus is None:
                         NAV.page = (NAV.page + 1) % len(PAGE_NAMES)
                         NAV.card_idx = 0; NAV.expanded = False; NAV.scroll = 0

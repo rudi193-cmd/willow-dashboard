@@ -20,6 +20,7 @@ C_PILL     = 6
 C_RED      = 7
 C_BROWN    = 8
 C_SELECT   = 9
+C_BORDER   = 10
 
 # ── Accessible skin symbol map ────────────────────────────────────────────────
 STATE_SYMBOLS = {"green": "✓", "amber": "▲", "red": "✗", "blue": "●", "dim": "·"}
@@ -143,6 +144,6 @@ def _apply_colors(skin: Skin) -> None:
     curses.init_pair(C_PILL,    skin.color_pill,   -1)
     curses.init_pair(C_RED,     skin.color_red,    -1)
     curses.init_pair(C_SELECT,  skin.color_select, -1)
-    curses.init_pair(C_BORDER,  skin.color_border, -1) if hasattr(curses, 'COLOR_WHITE') else None
+    curses.init_pair(C_BORDER,  skin.color_border, -1)
     brown = 130 if curses.COLORS >= 256 else curses.COLOR_YELLOW
     curses.init_pair(C_BROWN, brown, -1)
