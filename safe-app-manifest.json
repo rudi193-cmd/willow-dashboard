@@ -1,0 +1,36 @@
+{
+  "app_id": "willow-dashboard",
+  "name": "Willow Dashboard",
+  "version": "0.2.0",
+  "safe_version": ">=2.0.0",
+  "b17": "WDASH",
+  "agent_type": "infra",
+  "description": "Terminal TUI for the Willow system — Heimdallr chat, Kart queue, KB search, system status",
+  "author": "Sean Campbell",
+  "data_streams": [
+    {
+      "id": "chat_history",
+      "purpose": "Active session chat context for Heimdallr panel",
+      "retention": "session",
+      "description": "Cleared on exit"
+    },
+    {
+      "id": "system_stats",
+      "purpose": "Live read of Postgres, Ollama, SAFE manifest counts",
+      "retention": "none",
+      "description": "Read-only, never persisted"
+    }
+  ],
+  "permissions": [
+    "local_llm",
+    "cloud_llm_free",
+    "postgres_read",
+    "store_read",
+    "safe_manifest_read"
+  ],
+  "privacy_tier": "local_only",
+  "local_processing": 1.0,
+  "entry_point": "dashboard.py",
+  "license": "MIT",
+  "repository": "https://github.com/rudi193-cmd/willow-dashboard"
+}
