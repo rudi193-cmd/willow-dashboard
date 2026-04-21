@@ -1060,6 +1060,46 @@ def _section_header(win, y: int, label: str) -> None:
     except curses.error:
         pass
 
+def _draw_hero_vitals(win, y: int) -> None:
+    """Draw CPU/MEM/DISK/TEMP inline vitals strip at row y."""
+    h, w = win.getmaxyx()
+    if y < 0 or y >= h:
+        return
+    with DATA.lock:
+        cpu  = DATA.sys_cpu
+        mem  = DATA.sys_mem
+        disk = DATA.sys_disk
+        tmp  = DATA.sys_tmp
+
+    bar_w = 6
+    parts: list[tuple[str, str, str, int]] = [
+        ("CPU ", _ascii_bar(cpu, bar_w),  f" {cpu:2d}%",  cpu),
+        (" MEM ", _ascii_bar(mem, bar_w), f" {mem:2d}%",  mem),
+        (" DISK ", _ascii_bar(disk, bar_w), f" {disk:2d}%", disk),
+    ]
+
+    try:
+        win.hline(y, 0, curses.ACS_HLINE, w - 1, curses.color_pair(C_DIM))
+    except curses.error:
+        pass
+
+    x = 1
+    for label, bar, val, pct in parts:
+        if x + len(label) + bar_w + len(val) + 2 >= w:
+            break
+        safe_addstr(win, y, x, label, curses.color_pair(C_DIM))
+        x += len(label)
+        bar_col = C_AMBER if pct > 85 else C_BLUE
+        safe_addstr(win, y, x, bar, curses.color_pair(bar_col))
+        x += bar_w
+        safe_addstr(win, y, x, val, curses.color_pair(C_DIM))
+        x += len(val)
+
+    tmp_col = C_AMBER if tmp > 70 else C_DIM
+    tmp_str = f" TMP {tmp}°C"
+    if x + len(tmp_str) < w - 1:
+        safe_addstr(win, y, x, tmp_str, curses.color_pair(tmp_col))
+
 def draw_panel_border(win, focused):
     attr = (curses.color_pair(C_AMBER) | curses.A_BOLD) if focused else \
            (curses.color_pair(C_DIM) | curses.A_DIM)
@@ -1148,7 +1188,7 @@ def draw_willow_hero(win):
     agent = f"{AGENT_NAME.capitalize()} · Sonnet 4.6"
     safe_addstr(win, _TREE_H, w - len(agent) - 2, agent, curses.color_pair(C_DIM))
 
-    draw_hline(win, _TREE_H + 2, curses.color_pair(C_DIM))
+    _draw_hero_vitals(win, _TREE_H + 2)
     return _TREE_H + 3
 
 def draw_stat_strip(win):
@@ -1206,7 +1246,7 @@ def draw_page_bar(stdscr):
             tab_col = C_AMBER if NAV.focus is not None else C_BLUE
             attr = curses.color_pair(tab_col) | curses.A_BOLD | curses.A_REVERSE
         else:
-            attr = curses.color_pair(C_DIM)
+            attr = curses.color_pair(C_DIM) | curses.A_DIM
         if x + len(label) < w:
             try: stdscr.addstr(y, x, label, attr)
             except curses.error: pass
@@ -1231,6 +1271,9 @@ def draw_overview_left(win):
     win.erase()
     content_y = draw_willow_hero(win)
     focused   = NAV.focus == "left"
+
+    _section_header(win, content_y, "COMMAND")
+    content_y += 1
 
     # ── Chat history ──
     input_row  = h - 3   # ▸ prompt row (above stat strip)
@@ -1352,18 +1395,95 @@ def draw_overview_right(win):
     if shutdown_mod.SHUTDOWN.active:
         draw_shutdown_right(win)
         return
+    h, w = win.getmaxyx()
+    win.erase()
     focused = NAV.focus == "right"
-    enabled = _CARDS
-    total_slots = len(enabled) + 1  # +1 for + card
 
-    if NAV.expanded and focused and 0 <= NAV.card_idx < len(enabled):
-        card = enabled[NAV.card_idx]
-        row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row,
-                                                confirm_action=NAV.confirm_action,
-                                                session_atom=_load_session_atom(card.id))
-        NAV._expand_total = row_count
-    else:
-        NAV.card_scroll = card_mod.draw_card_grid(win, enabled, NAV.card_idx, NAV.card_scroll)
+    with DATA.lock:
+        pg_kb     = DATA.pg_knowledge
+        pg_edges  = DATA.pg_edges
+        kp        = DATA.kart_pending
+        kr        = DATA.kart_running
+        kd        = DATA.kart_done
+        ollama_up = DATA.ollama_running
+        ygg       = DATA.ollama_ygg
+        safe_p    = DATA.manifests_pass
+        safe_t    = DATA.manifests_total
+        cpu       = DATA.sys_cpu
+        mem       = DATA.sys_mem
+        disk      = DATA.sys_disk
+        tmp       = DATA.sys_tmp
+        tasks     = DATA.kart_tasks[:3]
+
+    y = 0
+    _section_header(win, y, "STATUS"); y += 1
+
+    # Postgres / LOAM
+    safe_addstr(win, y, 1, "● Postgres", curses.color_pair(C_GREEN)); y += 1
+    safe_addstr(win, y, 3, f"{pg_kb} atoms · {pg_edges} edges",
+                curses.color_pair(C_DIM)); y += 1
+
+    # Kart
+    try:
+        kp_warn = int(kp) > 0
+    except (ValueError, TypeError):
+        kp_warn = False
+    kart_dot = "▲" if kp_warn else "●"
+    kart_col = C_AMBER if kp_warn else C_GREEN
+    safe_addstr(win, y, 1, f"{kart_dot} Kart",
+                curses.color_pair(kart_col) | (curses.A_BOLD if kp_warn else 0)); y += 1
+    safe_addstr(win, y, 3, f"{kp}q · {kr}r · {kd}d",
+                curses.color_pair(C_DIM)); y += 1
+
+    # Ollama
+    ollama_dot = "●" if ollama_up else "✗"
+    ollama_col = C_GREEN if ollama_up else C_RED
+    safe_addstr(win, y, 1, f"{ollama_dot} Ollama",
+                curses.color_pair(ollama_col)); y += 1
+    safe_addstr(win, y, 3, f"{ygg} · {'warm' if ollama_up else 'down'}",
+                curses.color_pair(C_DIM)); y += 1
+
+    # SAFE
+    try:
+        safe_ok = int(safe_p) == int(safe_t) and int(safe_t) > 0
+    except (ValueError, TypeError):
+        safe_ok = False
+    safe_dot = "●" if safe_ok else "▲"
+    safe_col = C_GREEN if safe_ok else C_AMBER
+    safe_addstr(win, y, 1, f"{safe_dot} SAFE",
+                curses.color_pair(safe_col)); y += 1
+    safe_addstr(win, y, 3, f"{safe_p}/{safe_t} signed",
+                curses.color_pair(C_DIM)); y += 1
+
+    # VITALS
+    if y < h - 7:
+        _section_header(win, y, "VITALS"); y += 1
+        bar_w = max(4, w - 12)
+        for label, pct, threshold in [
+            ("CPU", cpu, 85),
+            ("MEM", mem, 90),
+            ("DSK", disk, 85),
+        ]:
+            if y >= h - 4:
+                break
+            bar = _ascii_bar(pct, bar_w)
+            bar_col = C_AMBER if pct > threshold else C_GREEN
+            safe_addstr(win, y, 1, f"{label} ", curses.color_pair(C_DIM))
+            safe_addstr(win, y, 5, bar, curses.color_pair(bar_col))
+            safe_addstr(win, y, 5 + bar_w, f" {pct:2d}%", curses.color_pair(C_DIM))
+            y += 1
+        if y < h - 4:
+            tmp_col = C_AMBER if tmp > 70 else C_DIM
+            safe_addstr(win, y, 1, f"TMP {tmp}°C", curses.color_pair(tmp_col)); y += 1
+
+    # QUEUE
+    if y < h - 3 and tasks:
+        _section_header(win, y, "QUEUE"); y += 1
+        for t in tasks:
+            if y >= h - 2:
+                break
+            safe_addstr(win, y, 1, t["cmd"][:max(1, w - 4)],
+                        curses.color_pair(C_DIM)); y += 1
 
     draw_panel_border(win, focused)
     win.noutrefresh()
