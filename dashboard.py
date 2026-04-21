@@ -1994,7 +1994,7 @@ def main(stdscr):
                             break  # shutdown complete — exit
                     else:
                         NAV.quit_confirm = True
-                elif NAV.quit_confirm:
+                elif NAV.quit_confirm and key != -1:
                     NAV.quit_confirm = False
 
                 # Exit once shutdown completes
