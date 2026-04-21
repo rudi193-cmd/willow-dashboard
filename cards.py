@@ -514,7 +514,8 @@ def _draw_plus_card(win, y: int, x: int, w: int, h: int, is_selected: bool) -> N
 
 # ── Expanded card renderer ────────────────────────────────────────────────────
 
-def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int) -> int:
+def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int,
+                       confirm_action: dict = None) -> int:
     """Fill `win` with the expanded card view. Returns total data row count."""
     skin = skins.ACTIVE
     h, w = win.getmaxyx()
@@ -555,14 +556,22 @@ def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int) -> int
         except curses.error:
             pass
 
-    # Action hints at bottom
-    if card.actions:
-        hints = "  " + "  ".join(f"{a['key']}={a['label']}" for a in card.actions) + "  Esc=back"
+    # Confirm overlay or action hints at bottom
+    if confirm_action:
+        prompt = f"  {confirm_action.get('label','confirm')}? y=yes  n=cancel"
+        try:
+            win.addstr(h - 2, 0, " " * (w - 1), curses.color_pair(skins.C_AMBER) | curses.A_REVERSE)
+            win.addstr(h - 2, 0, prompt[:w - 1], curses.color_pair(skins.C_AMBER) | curses.A_REVERSE)
+        except curses.error:
+            pass
     else:
-        hints = "  Esc=back"
-    try:
-        win.addstr(h - 2, 0, hints[:w], curses.color_pair(skins.C_DIM))
-    except curses.error:
-        pass
+        if card.actions:
+            hints = "  " + "  ".join(f"{a['key']}={a['label']}" for a in card.actions) + "  Esc=back"
+        else:
+            hints = "  Esc=back"
+        try:
+            win.addstr(h - 2, 0, hints[:w], curses.color_pair(skins.C_DIM))
+        except curses.error:
+            pass
 
     return len(rows)

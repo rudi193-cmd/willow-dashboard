@@ -143,7 +143,8 @@ class NavState:
         self.expanded  = False
         self.scroll      = 0         # left panel log scroll
         self.card_scroll = 0         # right panel grid scroll top row
-        self.expand_row  = 0         # selected row inside expanded card
+        self.expand_row    = 0       # selected row inside expanded card
+        self.confirm_action = None   # action dict pending y/n confirmation
         self.search    = ""
         self.searching = False
     def tab(self):
@@ -573,6 +574,112 @@ def fetch_mcp():
         ["server", "command"])
     DATA.push_log(f"mcp: {count} servers")
 
+# ── Card action dispatch ──────────────────────────────────────────────────────
+
+def _get_expand_row(card) -> dict:
+    """Return the currently selected row from the expanded view cache."""
+    rows, _ = card_mod._run_expand_query(card)
+    if rows and 0 <= NAV.expand_row < len(rows):
+        return rows[NAV.expand_row]
+    return {}
+
+
+def _chat_with_context(card, action: dict, row: dict) -> None:
+    """Build a context-aware message and send to Heimdallr."""
+    row_str = "  ".join(f"{k}: {v}" for k, v in row.items()) if row else ""
+    label   = action.get("label", action.get("key", "?"))
+    if row_str:
+        msg = f"[{card.label}] {label} — {row_str}"
+    else:
+        msg = f"[{card.label}] {label}"
+    with CHAT.lock:
+        CHAT.input = ""
+    threading.Thread(target=send_chat, args=(msg,), daemon=True).start()
+    NAV.expanded = False
+    NAV.focus    = "left"
+
+
+def _execute_confirm(card, action: dict, row: dict) -> None:
+    """Execute a confirmed action. Runs in a background thread."""
+    key  = action.get("key", "")
+    name = card.id
+
+    if name == "kart":
+        task_id = row.get("task_id") or row.get("id", "")
+        if not task_id:
+            DATA.push_log("kart action: no task selected")
+            return
+        try:
+            conn = card_mod._pg_conn()
+            cur  = conn.cursor()
+            if key == "c":
+                cur.execute("UPDATE public.kart_task_queue SET status='cancelled' WHERE task_id=%s", (task_id,))
+                DATA.push_log(f"kart: cancelled {task_id}")
+            elif key == "r":
+                cur.execute("UPDATE public.kart_task_queue SET status='pending' WHERE task_id=%s", (task_id,))
+                DATA.push_log(f"kart: retried {task_id}")
+            conn.commit()
+            conn.close()
+            threading.Thread(target=fetch_postgres, daemon=True).start()
+        except Exception as ex:
+            DATA.push_log(f"kart action error: {ex}")
+
+    elif name == "secrets":
+        cred_name = row.get("name", "")
+        if not cred_name:
+            return
+        val = _get_vault_key(cred_name) or _get_vault_key(row.get("env_key", ""))
+        if val:
+            CHAT.add("system", f"[Secrets] {cred_name} = {val}")
+        else:
+            CHAT.add("system", f"[Secrets] {cred_name}: not found in vault")
+        NAV.focus = "left"
+
+    elif name == "fleet":
+        provider = row.get("provider", "")
+        if not provider:
+            return
+        endpoints = {
+            "groq":      "https://api.groq.com/openai/v1/models",
+            "cerebras":  "https://api.cerebras.ai/v1/models",
+            "sambanova": "https://api.sambanova.ai/v1/models",
+            "novita":    "https://api.novita.ai/v3/openai/models",
+        }
+        key_name = f"{provider.upper()}_API_KEY"
+        api_key  = _get_vault_key(key_name) or _get_vault_key(key_name.lower())
+        url = endpoints.get(provider, "")
+        if not api_key or not url:
+            DATA.push_log(f"fleet ping {provider}: no key")
+            return
+        try:
+            req = urllib.request.Request(url,
+                headers={"Authorization": f"Bearer {api_key}"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                status = r.status
+            DATA.push_log(f"fleet ping {provider}: {status} OK")
+            CHAT.add("system", f"[Fleet] {provider}: {status} OK")
+        except urllib.error.HTTPError as e:
+            DATA.push_log(f"fleet ping {provider}: {e.code}")
+            CHAT.add("system", f"[Fleet] {provider}: HTTP {e.code}")
+        except Exception as ex:
+            DATA.push_log(f"fleet ping {provider}: {ex}")
+        NAV.focus = "left"
+
+    else:
+        # Generic confirm — hand off to chat with context
+        _chat_with_context(card, action, row)
+
+
+def _dispatch_action(card, action: dict) -> None:
+    """Route an action key press to chat or confirm flow."""
+    row = _get_expand_row(card)
+    if action.get("type") == "chat":
+        _chat_with_context(card, action, row)
+    elif action.get("type") == "confirm":
+        NAV.confirm_action = action
+    # form type: not yet implemented
+
+
 def fetch_agents():
     count  = len(ALL_AGENTS)
     active = AGENT_NAME
@@ -821,7 +928,8 @@ def draw_overview_right(win):
 
     if NAV.expanded and focused and 0 <= NAV.card_idx < len(enabled):
         card = enabled[NAV.card_idx]
-        row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row)
+        row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row,
+                                                confirm_action=NAV.confirm_action)
         NAV._expand_total = row_count
     else:
         NAV.card_scroll = card_mod.draw_card_grid(win, enabled, NAV.card_idx, NAV.card_scroll)
@@ -1274,6 +1382,27 @@ def main(stdscr):
                 elif 32 <= key <= 126:
                     with CHAT.lock: CHAT.input += chr(key)
                     continue
+
+            # ── Expanded card action keys ──
+            if (NAV.expanded and NAV.focus == "right"
+                    and NAV.page == PAGE_OVERVIEW
+                    and 0 <= NAV.card_idx < len(_CARDS)):
+                card = _CARDS[NAV.card_idx]
+                if NAV.confirm_action:
+                    if key in (ord('y'), curses.KEY_ENTER, 10, 13):
+                        act = NAV.confirm_action
+                        NAV.confirm_action = None
+                        threading.Thread(target=_execute_confirm,
+                                         args=(card, act, _get_expand_row(card)),
+                                         daemon=True).start()
+                    elif key in (ord('n'), 27):
+                        NAV.confirm_action = None
+                    continue
+                else:
+                    for action in card.actions:
+                        if key == ord(action["key"]):
+                            _dispatch_action(card, action)
+                            continue
 
             # ── Search mode ──
             if NAV.searching:
