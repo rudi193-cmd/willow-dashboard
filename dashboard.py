@@ -468,11 +468,13 @@ def fetch_ollama():
             DATA.ollama_ygg     = latest
             DATA.ollama_models  = models
         DATA.push_log(f"ollama: {len(models)} models · yggdrasil {latest}")
+        card_mod.cache_put("yggdrasil", latest, f"{len(models)} models", "green")
     except Exception:
         with DATA.lock:
             DATA.ollama_running = False
             DATA.ollama_ygg     = "down"
         DATA.push_log("ollama: unreachable")
+        card_mod.cache_put("yggdrasil", "down", "ollama unreachable", "red")
 
 def fetch_manifests():
     try:
@@ -500,16 +502,72 @@ def fetch_secrets():
     try:
         vault_path = Path.home() / ".willow_creds.db"
         if not vault_path.exists():
+            card_mod.cache_put("secrets", "no vault", "", "amber")
             return
-        import sqlite3
         conn = sqlite3.connect(str(vault_path))
         rows = conn.execute("SELECT name, env_key FROM credentials ORDER BY name").fetchall()
         conn.close()
         with DATA.lock:
             DATA.secret_names = [{"name": r[0], "env_key": r[1]} for r in rows]
         DATA.push_log(f"secrets: {len(rows)} credentials")
+        card_mod.cache_put("secrets", str(len(rows)), "credentials", "green" if rows else "dim")
     except Exception as ex:
         DATA.push_log(f"secrets error: {ex}")
+        card_mod.cache_put("secrets", "error", str(ex)[:30], "red")
+
+
+_FLEET_PROVIDERS = [
+    ("groq",      "GROQ_API_KEY"),
+    ("cerebras",  "CEREBRAS_API_KEY"),
+    ("sambanova", "SAMBANOVA_API_KEY"),
+    ("novita",    "NOVITA_API_KEY"),
+]
+
+def fetch_fleet():
+    present = []
+    for name, key in _FLEET_PROVIDERS:
+        val = _get_vault_key(key) or _get_vault_key(key.lower())
+        if val:
+            present.append(name)
+    total = len(_FLEET_PROVIDERS)
+    count = len(present)
+    sub   = "  ".join(present) if present else "none configured"
+    state = "green" if count == total else "amber" if count > 0 else "red"
+    card_mod.cache_put("fleet", f"{count} / {total}", sub, state)
+    DATA.push_log(f"fleet: {count}/{total} keys found")
+
+
+def fetch_mcp():
+    search_dirs = [
+        Path.home(),
+        Path.home() / "github" / "willow-dashboard",
+        Path.home() / "github" / "willow-1.7",
+        Path(os.environ.get("WILLOW_PROJECT_ROOT", str(Path.home() / "github"))),
+    ]
+    servers: dict[str, str] = {}  # name -> command
+    seen_paths = set()
+    for d in search_dirs:
+        mcp_file = d / ".mcp.json"
+        if mcp_file in seen_paths or not mcp_file.exists():
+            continue
+        seen_paths.add(mcp_file)
+        try:
+            data = json.loads(mcp_file.read_text())
+            for name, cfg in data.get("mcpServers", {}).items():
+                servers[name] = cfg.get("command", "")
+        except Exception:
+            pass
+    count = len(servers)
+    names = "  ".join(list(servers)[:4])
+    state = "green" if count > 0 else "dim"
+    card_mod.cache_put("mcp", str(count), names, state)
+    DATA.push_log(f"mcp: {count} servers")
+
+def fetch_agents():
+    count = len(ALL_AGENTS)
+    active = AGENT_NAME
+    card_mod.cache_put("agents", str(count), f"active: {active}", "green")
+
 
 def refresh_all():
     with DATA.lock:
@@ -519,6 +577,9 @@ def refresh_all():
     fetch_ollama()
     fetch_manifests()
     fetch_secrets()
+    fetch_fleet()
+    fetch_mcp()
+    fetch_agents()
     card_mod.refresh_card_values(_CARDS)
 
 def background_refresh(stop_evt):

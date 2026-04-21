@@ -78,7 +78,7 @@ CARD_SEEDS: list[CardDef] = [
         order=1, enabled=True,
         pg_table="public.knowledge",
         value_query="SELECT COUNT(*) FROM public.knowledge",
-        sub_query="SELECT COUNT(*) FROM public.knowledge WHERE created_at > NOW() - INTERVAL '24 hours'",
+        sub_query="SELECT COUNT(*) FROM public.knowledge WHERE created_at::timestamp > NOW() - INTERVAL '24 hours'",
         sub_format="{} today",
         state_query="SELECT 'blue'",
         expand_query="SELECT id,title,category,created_at FROM public.knowledge ORDER BY created_at DESC LIMIT 50",
@@ -260,9 +260,13 @@ def cache_get(card_id: str) -> dict:
 
 def refresh_card_values(cards: list) -> None:
     """Run value/sub/state queries for all cards and store in cache.
+    Skips cards with no queries — those are populated by dedicated fetch
+    functions in dashboard.py (yggdrasil, fleet, secrets, agents, mcp).
     Called from background thread — safe to block on I/O.
     """
     for card in cards:
+        if not card.value_query and not card.sub_query and not card.state_query:
+            continue
         try:
             value = _run_card_query(card, card.value_query)
             sub   = _run_card_query(card, card.sub_query)
