@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import skins
 import cards as card_mod
+import shutdown as shutdown_mod
 
 # ── Color pairs ──────────────────────────────────────────────────────────────
 C_DEFAULT  = 0
@@ -430,7 +431,7 @@ def _call_fleet(messages, provider, api_key):
     return data["choices"][0]["message"]["content"]
 
 
-def send_chat(user_msg):
+def send_chat(user_msg, system_override: str = ""):
     """Send a message to Heimdallr. Runs in a background thread."""
     # Check for project switch before sending to LLM
     switch_id = _detect_switch(user_msg)
@@ -463,7 +464,7 @@ def send_chat(user_msg):
         cid = CHAT.card_context
     if cid:
         ctx_card = next((c for c in _CARDS if c.id == cid), None)
-    system_prompt = _build_system_prompt(card=ctx_card)
+    system_prompt = system_override if system_override else _build_system_prompt(card=ctx_card)
 
     messages = [{"role": "system", "content": system_prompt}] + CHAT.visible()
 
@@ -475,6 +476,8 @@ def send_chat(user_msg):
                 with CHAT.lock:
                     CHAT.stream += token
                 full += token
+            if shutdown_mod.SHUTDOWN.active:
+                full = shutdown_mod.process_agent_message(full)
             CHAT.add("assistant", full)
             with CHAT.lock:
                 CHAT.waiting = False
@@ -1067,7 +1070,59 @@ def draw_overview_left(win):
     draw_panel_border(win, focused)
     win.noutrefresh()
 
+def draw_shutdown_right(win):
+    """Right panel view during graceful shutdown."""
+    h, w = win.getmaxyx()
+    win.erase()
+    sd = shutdown_mod.SHUTDOWN
+
+    safe_addstr(win, 0, 1, "SHUTTING DOWN", curses.color_pair(C_AMBER) | curses.A_BOLD)
+    if sd.raw_mode:
+        safe_addstr(win, 0, w - 12, " RAW MODE ", curses.color_pair(C_DIM))
+
+    y = 2
+    for n, desc, _ in shutdown_mod.STEPS:
+        if y >= h - 2:
+            break
+        status = sd.status_for(n)
+        icon   = shutdown_mod.STEP_ICONS.get(status, "○")
+
+        if status == "done":
+            attr = curses.color_pair(C_GREEN)
+        elif status == "running":
+            attr = curses.color_pair(C_AMBER) | curses.A_BOLD
+        elif status == "error":
+            attr = curses.color_pair(C_RED)
+        else:
+            attr = curses.color_pair(C_DIM)
+
+        safe_addstr(win, y, 2, f" {icon}  {desc}", attr)
+
+        # Show current step detail line
+        if status == "running" and not sd.raw_mode:
+            safe_addstr(win, y + 1, 6,
+                        "Working...", curses.color_pair(C_DIM) | curses.A_DIM)
+            y += 2
+        else:
+            y += 1
+
+    if sd.complete:
+        safe_addstr(win, h - 3, 2,
+                    "  Session closed. Press Q to exit.",
+                    curses.color_pair(C_GREEN) | curses.A_BOLD)
+    elif not sd.raw_mode:
+        safe_addstr(win, h - 2, 2,
+                    "  Q = force quit without finishing",
+                    curses.color_pair(C_DIM))
+
+    draw_panel_border(win, False)
+    win.noutrefresh()
+
+
 def draw_overview_right(win):
+    if shutdown_mod.SHUTDOWN.active:
+        draw_shutdown_right(win)
+        return
     focused = NAV.focus == "right"
     enabled = _CARDS
     total_slots = len(enabled) + 1  # +1 for + card
@@ -1392,8 +1447,25 @@ def draw_settings_right(win):
             hint = "  ← active" if active else ""
             safe_addstr(win, y, 2, f"{marker}{skin.label}{hint}"[:w-4], attr)
 
+    # Developer options
+    dev_y = skin_y + len(skins.SKIN_SEEDS) + 2
+    if dev_y < h - 4:
+        safe_addstr(win, dev_y, 1, "── Developer ──", curses.color_pair(C_AMBER))
+        raw_on  = shutdown_mod.SHUTDOWN.raw_mode
+        sel_dev = focused and NAV.card_idx == _SKIN_IDX_OFFSET + len(skins.SKIN_SEEDS)
+        dev_attr = (curses.color_pair(C_SELECT) | curses.A_REVERSE if sel_dev
+                    else curses.color_pair(C_GREEN) | curses.A_BOLD if raw_on
+                    else curses.color_pair(C_DIM))
+        marker = "▶ " if raw_on else "  "
+        safe_addstr(win, dev_y + 1, 2,
+                    f"{marker}Shutdown raw mode  {'(on)' if raw_on else '(off)'}",
+                    dev_attr)
+        safe_addstr(win, dev_y + 2, 6,
+                    "Show agent output unfiltered during shutdown",
+                    curses.color_pair(C_DIM) | curses.A_DIM)
+
     # Agent list
-    agent_y = skin_y + len(skins.SKIN_SEEDS) + 2
+    agent_y = skin_y + len(skins.SKIN_SEEDS) + 5
     if agent_y < h - 2:
         safe_addstr(win, agent_y, 1, "── Registered Agents ──", curses.color_pair(C_AMBER))
         for i, (name, role) in enumerate(ALL_AGENTS.items()):
@@ -1565,11 +1637,24 @@ def main(stdscr):
                 # ── Global keys ──
                 if key == ord('q'):
                     if NAV.quit_confirm:
-                        break
+                        if shutdown_mod.SHUTDOWN.active and not shutdown_mod.SHUTDOWN.complete:
+                            # Shutdown running — second q force-quits
+                            break
+                        elif not shutdown_mod.SHUTDOWN.active:
+                            # Initiate graceful shutdown
+                            shutdown_mod.initiate_shutdown(send_chat)
+                            NAV.quit_confirm = False
+                            NAV.focus = "left"
+                        else:
+                            break  # shutdown complete — exit
                     else:
                         NAV.quit_confirm = True
                 elif NAV.quit_confirm:
-                    NAV.quit_confirm = False   # any other key cancels
+                    NAV.quit_confirm = False
+
+                # Exit once shutdown completes
+                if shutdown_mod.is_complete():
+                    break
                 if key == ord('r') and not NAV.quit_confirm:
                     threading.Thread(target=refresh_all, daemon=True).start()
                     threading.Thread(target=_load_cards, daemon=True).start()
@@ -1625,6 +1710,9 @@ def main(stdscr):
                                 skins.set_active(chosen.id)
                                 skins.ACTIVE = chosen
                                 skins._apply_colors(chosen)
+                            elif skin_i == len(skins.SKIN_SEEDS):
+                                # Raw mode toggle
+                                shutdown_mod.SHUTDOWN.raw_mode = not shutdown_mod.SHUTDOWN.raw_mode
                     else:
                         NAV.expanded = not NAV.expanded
                 elif key == curses.KEY_RESIZE:
