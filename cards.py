@@ -244,6 +244,36 @@ def save_card(card: CardDef) -> None:
     soil.put("willow-dashboard/cards", card.id, card.to_dict())
 
 
+# ── Value cache — populated by background thread, read by draw ───────────────
+# {card_id: {"value": str, "sub": str, "state": str}}
+_VALUE_CACHE: dict[str, dict] = {}
+_CACHE_LOCK = __import__("threading").Lock()
+
+
+def cache_put(card_id: str, value: str, sub: str, state: str) -> None:
+    with _CACHE_LOCK:
+        _VALUE_CACHE[card_id] = {"value": value, "sub": sub, "state": state}
+
+
+def cache_get(card_id: str) -> dict:
+    with _CACHE_LOCK:
+        return _VALUE_CACHE.get(card_id, {"value": "—", "sub": "", "state": ""})
+
+
+def refresh_card_values(cards: list) -> None:
+    """Run value/sub/state queries for all cards and store in cache.
+    Called from background thread — safe to block on I/O.
+    """
+    for card in cards:
+        try:
+            value = _run_card_query(card, card.value_query)
+            sub   = _run_card_query(card, card.sub_query)
+            state = _run_card_query(card, card.state_query)
+            cache_put(card.id, value or "—", sub or "", state or "")
+        except Exception:
+            cache_put(card.id, "?", "", "red")
+
+
 # ── Runtime data helpers ──────────────────────────────────────────────────────
 
 def _run_soil_query(card: CardDef, sql: str) -> str:
@@ -416,9 +446,11 @@ def _draw_card_cell(win, card: CardDef, y: int, x: int, w: int, h: int, selected
     except curses.error:
         pass
 
-    # Value
-    value = _run_card_query(card, card.value_query)
-    state = _run_card_query(card, card.state_query)
+    # Value — read from background cache, never block the draw thread
+    cached   = cache_get(card.id)
+    value    = cached["value"]
+    sub      = cached["sub"]
+    state    = cached["state"]
     val_attr = _state_to_color(state)
 
     if skin.accessible and state in skins.STATE_SYMBOLS:
@@ -430,8 +462,7 @@ def _draw_card_cell(win, card: CardDef, y: int, x: int, w: int, h: int, selected
         pass
 
     # Sub-label
-    if h > 3 and card.sub_query:
-        sub = _run_card_query(card, card.sub_query)
+    if h > 3 and sub:
         sub_text = card.sub_format.replace("{}", sub)[:w - 4]
         try:
             win.addstr(y + 3, x + 2, sub_text, curses.color_pair(skins.C_DIM))

@@ -519,6 +519,7 @@ def refresh_all():
     fetch_ollama()
     fetch_manifests()
     fetch_secrets()
+    card_mod.refresh_card_values(_CARDS)
 
 def background_refresh(stop_evt):
     while not stop_evt.is_set():
@@ -1155,6 +1156,7 @@ def main(stdscr):
 
     skins.init(stdscr)
     _load_cards()
+    threading.Thread(target=card_mod.refresh_card_values, args=(_CARDS,), daemon=True).start()
 
     stop_evt = threading.Event()
     t = threading.Thread(target=background_refresh, args=(stop_evt,), daemon=True)
