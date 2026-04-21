@@ -57,17 +57,17 @@ CARD_SEEDS: list[CardDef] = [
     CardDef(
         id="kart", label="Kart Queue", category="system", built_in=True,
         order=0, enabled=True,
-        pg_table="kart.kart_task_queue",
-        value_query="SELECT COUNT(*) FROM kart.kart_task_queue WHERE status='pending'",
-        sub_query="SELECT COUNT(*) FROM kart.kart_task_queue WHERE status='running'",
+        pg_table="public.kart_task_queue",
+        value_query="SELECT COUNT(*) FROM public.kart_task_queue WHERE status='pending'",
+        sub_query="SELECT COUNT(*) FROM public.kart_task_queue WHERE status='running'",
         sub_format="{} running",
         state_query=(
             "SELECT CASE WHEN COUNT(*)>10 THEN 'amber' "
             "WHEN COUNT(*)>0 THEN 'green' ELSE 'dim' END "
-            "FROM kart.kart_task_queue WHERE status='pending'"
+            "FROM public.kart_task_queue WHERE status='pending'"
         ),
-        expand_query="SELECT id,name,status,created_at FROM kart.kart_task_queue ORDER BY created_at DESC LIMIT 50",
-        expand_columns=["id", "name", "status", "created_at"],
+        expand_query="SELECT task_id,task,status,created_at FROM public.kart_task_queue ORDER BY created_at DESC LIMIT 50",
+        expand_columns=["task_id", "task", "status", "created_at"],
         actions=[
             {"key": "c", "label": "cancel task", "type": "confirm"},
             {"key": "r", "label": "retry task",  "type": "confirm"},
@@ -77,12 +77,12 @@ CARD_SEEDS: list[CardDef] = [
         id="knowledge", label="Knowledge", category="system", built_in=True,
         order=1, enabled=True,
         pg_table="public.knowledge",
-        value_query="SELECT COUNT(*) FROM public.knowledge WHERE deleted_at IS NULL",
+        value_query="SELECT COUNT(*) FROM public.knowledge",
         sub_query="SELECT COUNT(*) FROM public.knowledge WHERE created_at > NOW() - INTERVAL '24 hours'",
         sub_format="{} today",
         state_query="SELECT 'blue'",
-        expand_query="SELECT id,domain,title,created_at FROM public.knowledge ORDER BY created_at DESC LIMIT 50",
-        expand_columns=["id", "domain", "title", "created_at"],
+        expand_query="SELECT id,title,category,created_at FROM public.knowledge ORDER BY created_at DESC LIMIT 50",
+        expand_columns=["id", "title", "category", "created_at"],
         actions=[
             {"key": "/", "label": "search knowledge", "type": "chat"},
         ],
@@ -99,12 +99,9 @@ CARD_SEEDS: list[CardDef] = [
     CardDef(
         id="agents", label="Agents", category="system", built_in=True,
         order=3, enabled=True,
-        pg_table="willow_agents",
-        value_query="SELECT COUNT(*) FROM willow_agents WHERE active=true",
-        sub_query="SELECT COUNT(*) FROM willow_agents",
-        sub_format="{} total",
-        state_query="SELECT 'green'",
-        expand_columns=["name", "status", "last_seen"],
+        # populated at runtime from agents.json / registry; no DB query needed
+        value_query="", sub_query="", state_query="",
+        expand_columns=["name", "role"],
         actions=[
             {"key": "v", "label": "view detail", "type": "chat"},
         ],
@@ -217,10 +214,11 @@ _CARD_MAP: dict[str, CardDef] = {c.id: c for c in CARD_SEEDS}
 # ── SOIL seed / load ──────────────────────────────────────────────────────────
 
 def seed_cards() -> None:
-    """Seed card definitions to SOIL (safe to call multiple times)."""
+    """Seed card definitions to SOIL. Built-in cards always overwrite so query
+    fixes in code propagate on next restart. User cards are insert-only."""
     existing = {r["id"] for r in soil.all_records("willow-dashboard/cards")}
     for c in CARD_SEEDS:
-        if c.id not in existing:
+        if c.built_in or c.id not in existing:
             soil.put("willow-dashboard/cards", c.id, c.to_dict())
 
 
@@ -284,24 +282,31 @@ def _run_soil_query(card: CardDef, sql: str) -> str:
     return str(row[0]) if row and row[0] is not None else "0"
 
 
+def _pg_conn():
+    """Open a Postgres connection the same way the dashboard does."""
+    import psycopg2
+    dsn = os.environ.get("WILLOW_DB_URL", "")
+    if dsn:
+        return psycopg2.connect(dsn)
+    return psycopg2.connect(
+        dbname=os.environ.get("WILLOW_PG_DB", "willow"),
+        user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
+    )
+
+
 def _run_pg_query(card: CardDef, sql: str) -> str:
     """Run a Postgres query against the card's pg_table context."""
     if not sql:
         return ""
     try:
-        import psycopg2
-        db_url = os.environ.get("WILLOW_DB_URL", "")
-        if db_url:
-            conn = psycopg2.connect(db_url)
-        else:
-            conn = psycopg2.connect(dbname="willow", host="/var/run/postgresql")
-        cur = conn.cursor()
+        conn = _pg_conn()
+        cur  = conn.cursor()
         cur.execute(sql)
         row = cur.fetchone()
         conn.close()
         return str(row[0]) if row and row[0] is not None else "0"
-    except Exception:
-        return "?"
+    except Exception as e:
+        return f"!{type(e).__name__}"
 
 
 def _run_card_query(card: CardDef, sql: str) -> str:
@@ -321,13 +326,8 @@ def _run_expand_query(card: CardDef) -> list[dict]:
         return []
     try:
         if card.pg_table:
-            import psycopg2
-            db_url = os.environ.get("WILLOW_DB_URL", "")
-            if db_url:
-                conn = psycopg2.connect(db_url)
-            else:
-                conn = psycopg2.connect(dbname="willow", host="/var/run/postgresql")
-            cur = conn.cursor()
+            conn = _pg_conn()
+            cur  = conn.cursor()
             cur.execute(card.expand_query)
             rows = cur.fetchall()
             conn.close()
