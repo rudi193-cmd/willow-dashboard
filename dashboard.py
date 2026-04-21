@@ -1024,6 +1024,8 @@ def draw_settings_left(win):
     draw_panel_border(win, NAV.focus == "left")
     win.noutrefresh()
 
+_SKIN_IDX_OFFSET = len(_SETTINGS)  # card_idx values >= this → skin picker rows
+
 def draw_settings_right(win):
     h, w = win.getmaxyx()
     win.erase()
@@ -1040,8 +1042,28 @@ def draw_settings_right(win):
         safe_addstr(win, y + 1, 4, val[:w-6],  curses.color_pair(C_BLUE))
         safe_addstr(win, y + 2, 4, desc[:w-6], curses.color_pair(C_DIM) | curses.A_DIM)
 
+    # Skin picker
+    skin_y = 2 + len(_SETTINGS) * 3 + 1
+    if skin_y < h - 2:
+        safe_addstr(win, skin_y, 1, "── Skin ──", curses.color_pair(C_AMBER))
+        for i, skin in enumerate(skins.SKIN_SEEDS):
+            y = skin_y + 1 + i
+            if y >= h - 1: break
+            active  = skin.id == skins.ACTIVE.id
+            sel_idx = _SKIN_IDX_OFFSET + i
+            selected = focused and NAV.card_idx == sel_idx
+            if selected:
+                attr = curses.color_pair(C_SELECT) | curses.A_REVERSE
+            elif active:
+                attr = curses.color_pair(C_GREEN) | curses.A_BOLD
+            else:
+                attr = curses.color_pair(C_DIM)
+            marker = "▶ " if active else "  "
+            hint = "  ← active" if active else ""
+            safe_addstr(win, y, 2, f"{marker}{skin.label}{hint}"[:w-4], attr)
+
     # Agent list
-    agent_y = 2 + len(_SETTINGS) * 3 + 1
+    agent_y = skin_y + len(skins.SKIN_SEEDS) + 2
     if agent_y < h - 2:
         safe_addstr(win, agent_y, 1, "── Registered Agents ──", curses.color_pair(C_AMBER))
         for i, (name, role) in enumerate(ALL_AGENTS.items()):
@@ -1204,7 +1226,6 @@ def main(stdscr):
                     else: NAV.focus = None
                 elif key in (curses.KEY_ENTER, 10, 13):
                     if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
-                        total_slots = len(_CARDS) + 1
                         if NAV.card_idx >= len(_CARDS):
                             # + card — seed creation prompt in chat
                             with CHAT.lock:
@@ -1218,6 +1239,14 @@ def main(stdscr):
                         else:
                             NAV.expanded = not NAV.expanded
                             NAV.expand_row = 0
+                    elif NAV.focus == "right" and NAV.page == PAGE_SETTINGS:
+                        if NAV.card_idx >= _SKIN_IDX_OFFSET:
+                            skin_i = NAV.card_idx - _SKIN_IDX_OFFSET
+                            if 0 <= skin_i < len(skins.SKIN_SEEDS):
+                                chosen = skins.SKIN_SEEDS[skin_i]
+                                skins.set_active(chosen.id)
+                                skins.ACTIVE = chosen
+                                skins._apply_colors(chosen)
                     else:
                         NAV.expanded = not NAV.expanded
                 elif key == curses.KEY_RESIZE:
@@ -1235,6 +1264,8 @@ def main(stdscr):
                     elif NAV.focus == "right":
                         if NAV.expanded:
                             NAV.expand_row = max(0, NAV.expand_row - 1)
+                        elif NAV.page == PAGE_SETTINGS:
+                            NAV.card_idx = max(0, NAV.card_idx - 1)
                         else:
                             gcols = skins.ACTIVE.grid_columns
                             NAV.card_idx = max(0, NAV.card_idx - gcols)
@@ -1247,6 +1278,9 @@ def main(stdscr):
                         if NAV.expanded:
                             limit = getattr(NAV, "_expand_total", 0)
                             NAV.expand_row = min(max(0, limit - 1), NAV.expand_row + 1)
+                        elif NAV.page == PAGE_SETTINGS:
+                            top = _SKIN_IDX_OFFSET + len(skins.SKIN_SEEDS) - 1
+                            NAV.card_idx = min(top, NAV.card_idx + 1)
                         else:
                             gcols = skins.ACTIVE.grid_columns
                             top = len(_CARDS)  # max valid idx is + card
