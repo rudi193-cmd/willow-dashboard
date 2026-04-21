@@ -469,6 +469,8 @@ def fetch_ollama():
             DATA.ollama_models  = models
         DATA.push_log(f"ollama: {len(models)} models · yggdrasil {latest}")
         card_mod.cache_put("yggdrasil", latest, f"{len(models)} models", "green")
+        card_mod.cache_put_rows("yggdrasil",
+            [{"model": m} for m in models], ["model"])
     except Exception:
         with DATA.lock:
             DATA.ollama_running = False
@@ -511,6 +513,8 @@ def fetch_secrets():
             DATA.secret_names = [{"name": r[0], "env_key": r[1]} for r in rows]
         DATA.push_log(f"secrets: {len(rows)} credentials")
         card_mod.cache_put("secrets", str(len(rows)), "credentials", "green" if rows else "dim")
+        card_mod.cache_put_rows("secrets",
+            [{"name": r[0], "env_key": r[1]} for r in rows], ["name", "env_key"])
     except Exception as ex:
         DATA.push_log(f"secrets error: {ex}")
         card_mod.cache_put("secrets", "error", str(ex)[:30], "red")
@@ -534,6 +538,9 @@ def fetch_fleet():
     sub   = "  ".join(present) if present else "none configured"
     state = "green" if count == total else "amber" if count > 0 else "red"
     card_mod.cache_put("fleet", f"{count} / {total}", sub, state)
+    rows  = [{"provider": name, "key": "present" if name in present else "missing"}
+             for name, _ in _FLEET_PROVIDERS]
+    card_mod.cache_put_rows("fleet", rows, ["provider", "key"])
     DATA.push_log(f"fleet: {count}/{total} keys found")
 
 
@@ -561,12 +568,18 @@ def fetch_mcp():
     names = "  ".join(list(servers)[:4])
     state = "green" if count > 0 else "dim"
     card_mod.cache_put("mcp", str(count), names, state)
+    card_mod.cache_put_rows("mcp",
+        [{"server": name, "command": cmd} for name, cmd in servers.items()],
+        ["server", "command"])
     DATA.push_log(f"mcp: {count} servers")
 
 def fetch_agents():
-    count = len(ALL_AGENTS)
+    count  = len(ALL_AGENTS)
     active = AGENT_NAME
     card_mod.cache_put("agents", str(count), f"active: {active}", "green")
+    card_mod.cache_put_rows("agents",
+        [{"name": name, "role": role[:60]} for name, role in ALL_AGENTS.items()],
+        ["name", "role"])
 
 
 def refresh_all():

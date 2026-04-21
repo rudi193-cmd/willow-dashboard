@@ -243,19 +243,32 @@ def save_card(card: CardDef) -> None:
 
 
 # ── Value cache — populated by background thread, read by draw ───────────────
-# {card_id: {"value": str, "sub": str, "state": str}}
+# {card_id: {"value": str, "sub": str, "state": str, "rows": list[dict]}}
 _VALUE_CACHE: dict[str, dict] = {}
 _CACHE_LOCK = __import__("threading").Lock()
 
 
 def cache_put(card_id: str, value: str, sub: str, state: str) -> None:
     with _CACHE_LOCK:
-        _VALUE_CACHE[card_id] = {"value": value, "sub": sub, "state": state}
+        existing = _VALUE_CACHE.get(card_id, {})
+        _VALUE_CACHE[card_id] = {
+            "value": value, "sub": sub, "state": state,
+            "rows": existing.get("rows", []),
+        }
+
+
+def cache_put_rows(card_id: str, rows: list, columns: list) -> None:
+    """Store expand rows for cards whose data comes from fetch functions."""
+    with _CACHE_LOCK:
+        existing = _VALUE_CACHE.get(card_id, {"value": "—", "sub": "", "state": ""})
+        existing["rows"] = rows
+        existing["columns"] = columns
+        _VALUE_CACHE[card_id] = existing
 
 
 def cache_get(card_id: str) -> dict:
     with _CACHE_LOCK:
-        return _VALUE_CACHE.get(card_id, {"value": "—", "sub": "", "state": ""})
+        return _VALUE_CACHE.get(card_id, {"value": "—", "sub": "", "state": "", "rows": []})
 
 
 def refresh_card_values(cards: list) -> None:
@@ -324,25 +337,30 @@ def _run_card_query(card: CardDef, sql: str) -> str:
     return ""
 
 
-def _run_expand_query(card: CardDef) -> list[dict]:
-    """Run expand_query and return rows as dicts keyed by expand_columns."""
-    if not card.expand_query or not card.expand_columns:
-        return []
-    try:
-        if card.pg_table:
-            conn = _pg_conn()
-            cur  = conn.cursor()
-            cur.execute(card.expand_query)
-            rows = cur.fetchall()
-            conn.close()
-        elif card.soil_collection:
-            rows = soil.query(card.soil_collection, card.expand_query)
-        else:
-            return []
-        cols = card.expand_columns
-        return [{cols[i]: row[i] for i in range(min(len(cols), len(row)))} for row in rows]
-    except Exception:
-        return []
+def _run_expand_query(card: CardDef) -> tuple[list[dict], list[str]]:
+    """Return (rows, columns) for the expanded view.
+    If no SQL query, falls back to rows cached by a fetch function.
+    """
+    if card.expand_query and card.expand_columns:
+        try:
+            if card.pg_table:
+                conn = _pg_conn()
+                cur  = conn.cursor()
+                cur.execute(card.expand_query)
+                rows = cur.fetchall()
+                conn.close()
+            elif card.soil_collection:
+                rows = soil.query(card.soil_collection, card.expand_query)
+            else:
+                rows = []
+            cols = card.expand_columns
+            return [{cols[i]: row[i] for i in range(min(len(cols), len(row)))} for row in rows], cols
+        except Exception:
+            pass
+    # Fall back to rows stored by fetch functions
+    cached = cache_get(card.id)
+    cols   = cached.get("columns", card.expand_columns or [])
+    return cached.get("rows", []), cols
 
 
 def _state_to_color(state: str) -> int:
@@ -512,9 +530,8 @@ def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int) -> int
     except curses.error:
         pass
 
-    # Header row
-    rows = _run_expand_query(card)
-    cols = card.expand_columns or []
+    # Header row + data
+    rows, cols = _run_expand_query(card)
     if cols:
         col_w = max(1, (w - 2) // len(cols))
         header_line = "  " + "".join(c[:col_w - 1].ljust(col_w) for c in cols)
@@ -530,7 +547,7 @@ def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int) -> int
         is_sel = (i + row_offset == sel_row)
         attr = curses.color_pair(skins.C_SELECT) | curses.A_REVERSE if is_sel else curses.color_pair(skins.C_BLUE)
         line = "  "
-        for col in cols:
+        for col in (cols or []):
             val = str(row.get(col, ""))[:col_w - 1].ljust(col_w)
             line += val
         try:
