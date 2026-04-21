@@ -21,6 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import skins
+import cards as card_mod
+
 # ── Color pairs ──────────────────────────────────────────────────────────────
 C_DEFAULT  = 0
 C_BLUE     = 1
@@ -138,7 +141,10 @@ class NavState:
         self.focus     = None        # None | "left" | "right"
         self.card_idx  = 0
         self.expanded  = False
-        self.scroll    = 0           # left panel log scroll
+        self.scroll      = 0         # left panel log scroll
+        self.card_scroll = 0         # right panel grid scroll top row
+        self.expand_row    = 0       # selected row inside expanded card
+        self.confirm_action = None   # action dict pending y/n confirmation
         self.search    = ""
         self.searching = False
     def tab(self):
@@ -146,6 +152,14 @@ class NavState:
         self.expanded = False
 
 NAV = NavState()
+
+# ── Card catalog — loaded from SOIL at startup and on refresh ────────────────
+_CARDS: list = []  # list[card_mod.CardDef]
+
+def _load_cards() -> None:
+    global _CARDS
+    card_mod.seed_cards()
+    _CARDS = card_mod.load_cards()
 
 # ── Agent identity — read from env, resolved at runtime ──────────────────────
 AGENT_NAME = os.environ.get("WILLOW_AGENT_NAME", "heimdallr")
@@ -455,11 +469,15 @@ def fetch_ollama():
             DATA.ollama_ygg     = latest
             DATA.ollama_models  = models
         DATA.push_log(f"ollama: {len(models)} models · yggdrasil {latest}")
+        card_mod.cache_put("yggdrasil", latest, f"{len(models)} models", "green")
+        card_mod.cache_put_rows("yggdrasil",
+            [{"model": m} for m in models], ["model"])
     except Exception:
         with DATA.lock:
             DATA.ollama_running = False
             DATA.ollama_ygg     = "down"
         DATA.push_log("ollama: unreachable")
+        card_mod.cache_put("yggdrasil", "down", "ollama unreachable", "red")
 
 def fetch_manifests():
     try:
@@ -487,16 +505,189 @@ def fetch_secrets():
     try:
         vault_path = Path.home() / ".willow_creds.db"
         if not vault_path.exists():
+            card_mod.cache_put("secrets", "no vault", "", "amber")
             return
-        import sqlite3
         conn = sqlite3.connect(str(vault_path))
         rows = conn.execute("SELECT name, env_key FROM credentials ORDER BY name").fetchall()
         conn.close()
         with DATA.lock:
             DATA.secret_names = [{"name": r[0], "env_key": r[1]} for r in rows]
         DATA.push_log(f"secrets: {len(rows)} credentials")
+        card_mod.cache_put("secrets", str(len(rows)), "credentials", "green" if rows else "dim")
+        card_mod.cache_put_rows("secrets",
+            [{"name": r[0], "env_key": r[1]} for r in rows], ["name", "env_key"])
     except Exception as ex:
         DATA.push_log(f"secrets error: {ex}")
+        card_mod.cache_put("secrets", "error", str(ex)[:30], "red")
+
+
+_FLEET_PROVIDERS = [
+    ("groq",      "GROQ_API_KEY"),
+    ("cerebras",  "CEREBRAS_API_KEY"),
+    ("sambanova", "SAMBANOVA_API_KEY"),
+    ("novita",    "NOVITA_API_KEY"),
+]
+
+def fetch_fleet():
+    present = []
+    for name, key in _FLEET_PROVIDERS:
+        val = _get_vault_key(key) or _get_vault_key(key.lower())
+        if val:
+            present.append(name)
+    total = len(_FLEET_PROVIDERS)
+    count = len(present)
+    sub   = "  ".join(present) if present else "none configured"
+    state = "green" if count == total else "amber" if count > 0 else "red"
+    card_mod.cache_put("fleet", f"{count} / {total}", sub, state)
+    rows  = [{"provider": name, "key": "present" if name in present else "missing"}
+             for name, _ in _FLEET_PROVIDERS]
+    card_mod.cache_put_rows("fleet", rows, ["provider", "key"])
+    DATA.push_log(f"fleet: {count}/{total} keys found")
+
+
+def fetch_mcp():
+    search_dirs = [
+        Path.home(),
+        Path.home() / "github" / "willow-dashboard",
+        Path.home() / "github" / "willow-1.7",
+        Path(os.environ.get("WILLOW_PROJECT_ROOT", str(Path.home() / "github"))),
+    ]
+    servers: dict[str, str] = {}  # name -> command
+    seen_paths = set()
+    for d in search_dirs:
+        mcp_file = d / ".mcp.json"
+        if mcp_file in seen_paths or not mcp_file.exists():
+            continue
+        seen_paths.add(mcp_file)
+        try:
+            data = json.loads(mcp_file.read_text())
+            for name, cfg in data.get("mcpServers", {}).items():
+                servers[name] = cfg.get("command", "")
+        except Exception:
+            pass
+    count = len(servers)
+    names = "  ".join(list(servers)[:4])
+    state = "green" if count > 0 else "dim"
+    card_mod.cache_put("mcp", str(count), names, state)
+    card_mod.cache_put_rows("mcp",
+        [{"server": name, "command": cmd} for name, cmd in servers.items()],
+        ["server", "command"])
+    DATA.push_log(f"mcp: {count} servers")
+
+# ── Card action dispatch ──────────────────────────────────────────────────────
+
+def _get_expand_row(card) -> dict:
+    """Return the currently selected row from the expanded view cache."""
+    rows, _ = card_mod._run_expand_query(card)
+    if rows and 0 <= NAV.expand_row < len(rows):
+        return rows[NAV.expand_row]
+    return {}
+
+
+def _chat_with_context(card, action: dict, row: dict) -> None:
+    """Build a context-aware message and send to Heimdallr."""
+    row_str = "  ".join(f"{k}: {v}" for k, v in row.items()) if row else ""
+    label   = action.get("label", action.get("key", "?"))
+    if row_str:
+        msg = f"[{card.label}] {label} — {row_str}"
+    else:
+        msg = f"[{card.label}] {label}"
+    with CHAT.lock:
+        CHAT.input = ""
+    threading.Thread(target=send_chat, args=(msg,), daemon=True).start()
+    NAV.expanded = False
+    NAV.focus    = "left"
+
+
+def _execute_confirm(card, action: dict, row: dict) -> None:
+    """Execute a confirmed action. Runs in a background thread."""
+    key  = action.get("key", "")
+    name = card.id
+
+    if name == "kart":
+        task_id = row.get("task_id") or row.get("id", "")
+        if not task_id:
+            DATA.push_log("kart action: no task selected")
+            return
+        try:
+            conn = card_mod._pg_conn()
+            cur  = conn.cursor()
+            if key == "c":
+                cur.execute("UPDATE public.kart_task_queue SET status='cancelled' WHERE task_id=%s", (task_id,))
+                DATA.push_log(f"kart: cancelled {task_id}")
+            elif key == "r":
+                cur.execute("UPDATE public.kart_task_queue SET status='pending' WHERE task_id=%s", (task_id,))
+                DATA.push_log(f"kart: retried {task_id}")
+            conn.commit()
+            conn.close()
+            threading.Thread(target=fetch_postgres, daemon=True).start()
+        except Exception as ex:
+            DATA.push_log(f"kart action error: {ex}")
+
+    elif name == "secrets":
+        cred_name = row.get("name", "")
+        if not cred_name:
+            return
+        val = _get_vault_key(cred_name) or _get_vault_key(row.get("env_key", ""))
+        if val:
+            CHAT.add("system", f"[Secrets] {cred_name} = {val}")
+        else:
+            CHAT.add("system", f"[Secrets] {cred_name}: not found in vault")
+        NAV.focus = "left"
+
+    elif name == "fleet":
+        provider = row.get("provider", "")
+        if not provider:
+            return
+        endpoints = {
+            "groq":      "https://api.groq.com/openai/v1/models",
+            "cerebras":  "https://api.cerebras.ai/v1/models",
+            "sambanova": "https://api.sambanova.ai/v1/models",
+            "novita":    "https://api.novita.ai/v3/openai/models",
+        }
+        key_name = f"{provider.upper()}_API_KEY"
+        api_key  = _get_vault_key(key_name) or _get_vault_key(key_name.lower())
+        url = endpoints.get(provider, "")
+        if not api_key or not url:
+            DATA.push_log(f"fleet ping {provider}: no key")
+            return
+        try:
+            req = urllib.request.Request(url,
+                headers={"Authorization": f"Bearer {api_key}"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                status = r.status
+            DATA.push_log(f"fleet ping {provider}: {status} OK")
+            CHAT.add("system", f"[Fleet] {provider}: {status} OK")
+        except urllib.error.HTTPError as e:
+            DATA.push_log(f"fleet ping {provider}: {e.code}")
+            CHAT.add("system", f"[Fleet] {provider}: HTTP {e.code}")
+        except Exception as ex:
+            DATA.push_log(f"fleet ping {provider}: {ex}")
+        NAV.focus = "left"
+
+    else:
+        # Generic confirm — hand off to chat with context
+        _chat_with_context(card, action, row)
+
+
+def _dispatch_action(card, action: dict) -> None:
+    """Route an action key press to chat or confirm flow."""
+    row = _get_expand_row(card)
+    if action.get("type") == "chat":
+        _chat_with_context(card, action, row)
+    elif action.get("type") == "confirm":
+        NAV.confirm_action = action
+    # form type: not yet implemented
+
+
+def fetch_agents():
+    count  = len(ALL_AGENTS)
+    active = AGENT_NAME
+    card_mod.cache_put("agents", str(count), f"active: {active}", "green")
+    card_mod.cache_put_rows("agents",
+        [{"name": name, "role": role[:60]} for name, role in ALL_AGENTS.items()],
+        ["name", "role"])
+
 
 def refresh_all():
     with DATA.lock:
@@ -506,6 +697,10 @@ def refresh_all():
     fetch_ollama()
     fetch_manifests()
     fetch_secrets()
+    fetch_fleet()
+    fetch_mcp()
+    fetch_agents()
+    card_mod.refresh_card_values(_CARDS)
 
 def background_refresh(stop_evt):
     while not stop_evt.is_set():
@@ -727,39 +922,18 @@ def draw_overview_left(win):
     win.noutrefresh()
 
 def draw_overview_right(win):
-    h, w = win.getmaxyx()
-    win.erase()
-    safe_addstr(win, 0, 1, "System Cards", curses.color_pair(C_HEADER) | curses.A_BOLD)
-    add_lbl = "+ add"
-    safe_addstr(win, 0, w - len(add_lbl) - 2, add_lbl, curses.color_pair(C_DIM))
-    rows, cols = 5, 2
-    card_h = max(4, (h - 1) // rows)
-    card_w = max(10, (w - 1) // cols)
-    with DATA.lock:
-        ygg_v  = DATA.ollama_ygg; ygg_run = DATA.ollama_running
-        kp     = DATA.kart_pending; kd = DATA.kart_done
-        kb     = DATA.pg_knowledge; edges = DATA.pg_edges
-        mfp    = DATA.manifests_pass; mft = DATA.manifests_total
-    cards = [
-        ("Yggdrasil",  ygg_v,  f"{'running' if ygg_run else 'down'}",        "green" if ygg_run else "red"),
-        ("Kart Queue", kp,     f"pending · {kd} done",                        "amber" if kp not in ("0","—") else "green"),
-        ("SAP Tools",  "49",   "all live · portless",                         "blue"),
-        ("Knowledge",  kb,     f"atoms · {edges} edges",                      "blue"),
-        ("Agents",     "6",    "heimdallr · kart +4",                         "blue"),
-        ("/Skills",    "34",   "active · 8 archived",                         "blue"),
-        ("Postgres",   "UP",   "unix socket · peer auth",                     "green"),
-        ("SAFE Mfsts", mfp,    f"signed / {mft} total",                       "blue"),
-        ("Fleet",      "3",    "groq · cerebras · sambanova",                 "blue"),
-        ("",           "+",    "add card",                                    "dim"),
-    ]
     focused = NAV.focus == "right"
-    for i, (label, value, sub, state) in enumerate(cards):
-        row, col = i // cols, i % cols
-        y = 1 + row * card_h
-        x = col * card_w
-        if y + card_h > h or x + card_w > w: continue
-        selected = focused and i == NAV.card_idx
-        _draw_card(win, y, x, card_h, card_w, label, value, sub, state, selected)
+    enabled = _CARDS
+    total_slots = len(enabled) + 1  # +1 for + card
+
+    if NAV.expanded and focused and 0 <= NAV.card_idx < len(enabled):
+        card = enabled[NAV.card_idx]
+        row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row,
+                                                confirm_action=NAV.confirm_action)
+        NAV._expand_total = row_count
+    else:
+        NAV.card_scroll = card_mod.draw_card_grid(win, enabled, NAV.card_idx, NAV.card_scroll)
+
     draw_panel_border(win, focused)
     win.noutrefresh()
 
@@ -1033,6 +1207,8 @@ def draw_settings_left(win):
     draw_panel_border(win, NAV.focus == "left")
     win.noutrefresh()
 
+_SKIN_IDX_OFFSET = len(_SETTINGS)  # card_idx values >= this → skin picker rows
+
 def draw_settings_right(win):
     h, w = win.getmaxyx()
     win.erase()
@@ -1049,8 +1225,28 @@ def draw_settings_right(win):
         safe_addstr(win, y + 1, 4, val[:w-6],  curses.color_pair(C_BLUE))
         safe_addstr(win, y + 2, 4, desc[:w-6], curses.color_pair(C_DIM) | curses.A_DIM)
 
+    # Skin picker
+    skin_y = 2 + len(_SETTINGS) * 3 + 1
+    if skin_y < h - 2:
+        safe_addstr(win, skin_y, 1, "── Skin ──", curses.color_pair(C_AMBER))
+        for i, skin in enumerate(skins.SKIN_SEEDS):
+            y = skin_y + 1 + i
+            if y >= h - 1: break
+            active  = skin.id == skins.ACTIVE.id
+            sel_idx = _SKIN_IDX_OFFSET + i
+            selected = focused and NAV.card_idx == sel_idx
+            if selected:
+                attr = curses.color_pair(C_SELECT) | curses.A_REVERSE
+            elif active:
+                attr = curses.color_pair(C_GREEN) | curses.A_BOLD
+            else:
+                attr = curses.color_pair(C_DIM)
+            marker = "▶ " if active else "  "
+            hint = "  ← active" if active else ""
+            safe_addstr(win, y, 2, f"{marker}{skin.label}{hint}"[:w-4], attr)
+
     # Agent list
-    agent_y = 2 + len(_SETTINGS) * 3 + 1
+    agent_y = skin_y + len(skins.SKIN_SEEDS) + 2
     if agent_y < h - 2:
         safe_addstr(win, agent_y, 1, "── Registered Agents ──", curses.color_pair(C_AMBER))
         for i, (name, role) in enumerate(ALL_AGENTS.items()):
@@ -1140,19 +1336,9 @@ def main(stdscr):
     stdscr.nodelay(True)
     stdscr.timeout(50)
 
-    if curses.has_colors():
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(C_BLUE,   curses.COLOR_BLUE,   -1)
-        curses.init_pair(C_GREEN,  curses.COLOR_GREEN,  -1)
-        curses.init_pair(C_AMBER,  curses.COLOR_YELLOW, -1)
-        curses.init_pair(C_DIM,    curses.COLOR_WHITE,  -1)
-        curses.init_pair(C_HEADER, curses.COLOR_WHITE,  -1)
-        curses.init_pair(C_PILL,   curses.COLOR_CYAN,   -1)
-        curses.init_pair(C_RED,    curses.COLOR_RED,    -1)
-        brown = 130 if curses.COLORS >= 256 else curses.COLOR_YELLOW
-        curses.init_pair(C_BROWN,  brown,               -1)
-        curses.init_pair(C_SELECT, curses.COLOR_CYAN,   -1)
+    skins.init(stdscr)
+    _load_cards()
+    threading.Thread(target=card_mod.refresh_card_values, args=(_CARDS,), daemon=True).start()
 
     stop_evt = threading.Event()
     t = threading.Thread(target=background_refresh, args=(stop_evt,), daemon=True)
@@ -1179,18 +1365,44 @@ def main(stdscr):
                 if key == 27:                        # Esc — unfocus
                     NAV.focus = None
                     with CHAT.lock: CHAT.input = ""
+                    continue
                 elif key in (curses.KEY_ENTER, 10, 13):
                     with CHAT.lock:
                         msg = CHAT.input.strip()
                         CHAT.input = ""
                     if msg and not CHAT.waiting:
                         threading.Thread(target=send_chat, args=(msg,), daemon=True).start()
+                    continue
                 elif key in (curses.KEY_BACKSPACE, 127):
                     with CHAT.lock: CHAT.input = CHAT.input[:-1]
-                elif key == 9:                       # Tab — move focus
+                    continue
+                elif key == 9:                       # Tab — move focus to right panel
                     NAV.tab()
+                    continue
                 elif 32 <= key <= 126:
                     with CHAT.lock: CHAT.input += chr(key)
+                    continue
+
+            # ── Expanded card action keys ──
+            if (NAV.expanded and NAV.focus == "right"
+                    and NAV.page == PAGE_OVERVIEW
+                    and 0 <= NAV.card_idx < len(_CARDS)):
+                card = _CARDS[NAV.card_idx]
+                if NAV.confirm_action:
+                    if key in (ord('y'), curses.KEY_ENTER, 10, 13):
+                        act = NAV.confirm_action
+                        NAV.confirm_action = None
+                        threading.Thread(target=_execute_confirm,
+                                         args=(card, act, _get_expand_row(card)),
+                                         daemon=True).start()
+                    elif key in (ord('n'), 27):
+                        NAV.confirm_action = None
+                    continue
+                else:
+                    for action in card.actions:
+                        if key == ord(action["key"]):
+                            _dispatch_action(card, action)
+                            continue
 
             # ── Search mode ──
             if NAV.searching:
@@ -1208,6 +1420,7 @@ def main(stdscr):
                     break
                 elif key == ord('r'):
                     threading.Thread(target=refresh_all, daemon=True).start()
+                    threading.Thread(target=_load_cards, daemon=True).start()
                     DATA.push_log("manual refresh")
                 elif key == ord('/'):
                     NAV.searching = True; NAV.search = ""
@@ -1217,7 +1430,30 @@ def main(stdscr):
                     if NAV.expanded: NAV.expanded = False
                     else: NAV.focus = None
                 elif key in (curses.KEY_ENTER, 10, 13):
-                    NAV.expanded = not NAV.expanded
+                    if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
+                        if NAV.card_idx >= len(_CARDS):
+                            # + card — seed creation prompt in chat
+                            with CHAT.lock:
+                                CHAT.input = ""
+                            threading.Thread(
+                                target=send_chat,
+                                args=("I'd like to add a new card to my dashboard.",),
+                                daemon=True,
+                            ).start()
+                            NAV.focus = "left"
+                        else:
+                            NAV.expanded = not NAV.expanded
+                            NAV.expand_row = 0
+                    elif NAV.focus == "right" and NAV.page == PAGE_SETTINGS:
+                        if NAV.card_idx >= _SKIN_IDX_OFFSET:
+                            skin_i = NAV.card_idx - _SKIN_IDX_OFFSET
+                            if 0 <= skin_i < len(skins.SKIN_SEEDS):
+                                chosen = skins.SKIN_SEEDS[skin_i]
+                                skins.set_active(chosen.id)
+                                skins.ACTIVE = chosen
+                                skins._apply_colors(chosen)
+                    else:
+                        NAV.expanded = not NAV.expanded
                 elif key == curses.KEY_RESIZE:
                     stdscr.clear(); rebuild()
 
@@ -1231,27 +1467,45 @@ def main(stdscr):
                     if NAV.focus == "left" or NAV.page == PAGE_LOGS:
                         NAV.scroll = max(0, NAV.scroll - 1)
                     elif NAV.focus == "right":
-                        NAV.card_idx = max(0, NAV.card_idx - 2)  # move up a row
+                        if NAV.expanded:
+                            NAV.expand_row = max(0, NAV.expand_row - 1)
+                        elif NAV.page == PAGE_SETTINGS:
+                            NAV.card_idx = max(0, NAV.card_idx - 1)
+                        else:
+                            gcols = skins.ACTIVE.grid_columns
+                            NAV.card_idx = max(0, NAV.card_idx - gcols)
 
                 elif key == curses.KEY_DOWN:
                     if NAV.focus == "left" or NAV.page == PAGE_LOGS:
                         with DATA.lock: total = len(DATA.log)
                         NAV.scroll = min(max(0, total - 1), NAV.scroll + 1)
                     elif NAV.focus == "right":
-                        NAV.card_idx += 2  # move down a row
+                        if NAV.expanded:
+                            limit = getattr(NAV, "_expand_total", 0)
+                            NAV.expand_row = min(max(0, limit - 1), NAV.expand_row + 1)
+                        elif NAV.page == PAGE_SETTINGS:
+                            top = _SKIN_IDX_OFFSET + len(skins.SKIN_SEEDS) - 1
+                            NAV.card_idx = min(top, NAV.card_idx + 1)
+                        else:
+                            gcols = skins.ACTIVE.grid_columns
+                            top = len(_CARDS)  # max valid idx is + card
+                            NAV.card_idx = min(top, NAV.card_idx + gcols)
 
                 elif key == curses.KEY_LEFT:
-                    if NAV.focus == "right":
-                        if NAV.card_idx % 2 == 1:
-                            NAV.card_idx -= 1  # move to left column
+                    if NAV.focus == "right" and not NAV.expanded:
+                        gcols = skins.ACTIVE.grid_columns
+                        if NAV.card_idx % gcols > 0:
+                            NAV.card_idx -= 1
                     elif NAV.focus is None:
                         NAV.page = (NAV.page - 1) % len(PAGE_NAMES)
                         NAV.card_idx = 0; NAV.expanded = False; NAV.scroll = 0
 
                 elif key == curses.KEY_RIGHT:
-                    if NAV.focus == "right":
-                        if NAV.card_idx % 2 == 0:
-                            NAV.card_idx += 1  # move to right column
+                    if NAV.focus == "right" and not NAV.expanded:
+                        gcols = skins.ACTIVE.grid_columns
+                        top = len(_CARDS)
+                        if NAV.card_idx % gcols < gcols - 1 and NAV.card_idx < top:
+                            NAV.card_idx += 1
                     elif NAV.focus is None:
                         NAV.page = (NAV.page + 1) % len(PAGE_NAMES)
                         NAV.card_idx = 0; NAV.expanded = False; NAV.scroll = 0
