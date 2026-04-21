@@ -83,7 +83,7 @@ SKIN_SEEDS: list[Skin] = [
          color_header=curses.COLOR_YELLOW, color_value=curses.COLOR_YELLOW,
          color_green=curses.COLOR_YELLOW,  color_amber=curses.COLOR_YELLOW,
          color_dim=curses.COLOR_YELLOW,    color_pill=curses.COLOR_YELLOW,
-         color_hero=curses.COLOR_YELLOW),
+         color_hero=curses.COLOR_YELLOW,   color_border=curses.COLOR_WHITE),
 
     Skin(id="accessible", label="High Contrast",
          color_header=curses.COLOR_WHITE, color_value=curses.COLOR_WHITE,

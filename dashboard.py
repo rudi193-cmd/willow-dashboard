@@ -245,6 +245,7 @@ class ChatState:
         self.waiting       = False
         self.stream        = ""
         self.error         = None
+        self.last_provider = "—"     # last model that responded
 
     def add(self, role, content):
         with self.lock:
@@ -480,8 +481,9 @@ def send_chat(user_msg, system_override: str = ""):
                 full = shutdown_mod.process_agent_message(full)
             CHAT.add("assistant", full)
             with CHAT.lock:
-                CHAT.waiting = False
-                CHAT.stream  = ""
+                CHAT.waiting       = False
+                CHAT.stream        = ""
+                CHAT.last_provider = f"ygg:{DATA.ollama_ygg}"
             return
     except Exception as ex:
         DATA.push_log(f"ollama chat fail: {ex}")
@@ -501,8 +503,9 @@ def send_chat(user_msg, system_override: str = ""):
             if reply:
                 CHAT.add("assistant", reply)
                 with CHAT.lock:
-                    CHAT.waiting = False
-                    CHAT.stream  = ""
+                    CHAT.waiting       = False
+                    CHAT.stream        = ""
+                    CHAT.last_provider = provider
                 DATA.push_log(f"chat via {provider}")
                 return
         except Exception as ex:
@@ -966,14 +969,46 @@ def draw_stat_strip(win):
         x += len(pill) + 1
         if x >= w - 2: break
 
-# ── Page tab bar ─────────────────────────────────────────────────────────────
+# ── Title bar (row 0) ────────────────────────────────────────────────────────
+def draw_title_bar(stdscr):
+    h, w = stdscr.getmaxyx()
+    with CHAT.lock:
+        provider = CHAT.last_provider
+    with DATA.lock:
+        ts = DATA.ts
+
+    # Left: product name
+    title = " WILLOW DASHBOARD "
+    agent = f" {AGENT_NAME.upper()} "
+
+    # Right: time · agent · provider
+    right = f" {ts}  ·  {agent.strip()}  ·  {provider} "
+
+    try:
+        stdscr.addstr(0, 0, title,
+                      curses.color_pair(C_HEADER) | curses.A_BOLD | curses.A_REVERSE)
+        stdscr.addstr(0, len(title), agent,
+                      curses.color_pair(C_PILL) | curses.A_REVERSE)
+        fill_start = len(title) + len(agent)
+        fill_end   = max(fill_start, w - len(right) - 1)
+        stdscr.addstr(0, fill_start, " " * (fill_end - fill_start),
+                      curses.color_pair(C_DIM) | curses.A_REVERSE)
+        if fill_end + len(right) < w:
+            stdscr.addstr(0, fill_end, right,
+                          curses.color_pair(C_DIM) | curses.A_REVERSE)
+    except curses.error:
+        pass
+
+
+# ── Page tab bar (last row) ───────────────────────────────────────────────────
 def draw_page_bar(stdscr):
     h, w = stdscr.getmaxyx()
     y = h - 1
     x = 0
     for i, name in enumerate(PAGE_NAMES):
-        label = f" {i+1}:{name} "
-        if i == NAV.page:
+        active = (i == NAV.page)
+        label  = f" {i+1}·{name} " if active else f" {name} "
+        if active:
             tab_col = C_AMBER if NAV.focus is not None else C_BLUE
             attr = curses.color_pair(tab_col) | curses.A_BOLD | curses.A_REVERSE
         else:
@@ -1570,8 +1605,8 @@ def main(stdscr):
         h, w = stdscr.getmaxyx()
         left_w  = max(20, (w * 2) // 3)
         right_w = w - left_w
-        left_win  = curses.newwin(h - 1, left_w,  0, 0)
-        right_win = curses.newwin(h - 1, right_w, 0, left_w)
+        left_win  = curses.newwin(h - 2, left_w,  1, 0)
+        right_win = curses.newwin(h - 2, right_w, 1, left_w)
 
     rebuild()
 
@@ -1786,6 +1821,7 @@ def main(stdscr):
             except curses.error: pass
 
             stdscr.erase()
+            draw_title_bar(stdscr)
             draw_page_bar(stdscr)
             stdscr.noutrefresh()
 
