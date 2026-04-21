@@ -164,6 +164,7 @@ def _load_cards() -> None:
     _CARDS = card_mod.load_cards()
 
 # ── Agent identity — read from env, resolved at runtime ──────────────────────
+VERSION    = "0.2.0"
 AGENT_NAME = os.environ.get("WILLOW_AGENT_NAME", "heimdallr")
 APP_ID      = os.environ.get("WILLOW_APP_ID", AGENT_NAME)
 
@@ -978,7 +979,7 @@ def draw_title_bar(stdscr):
         ts = DATA.ts
 
     # Left: product name
-    title = " WILLOW DASHBOARD "
+    title = f" WILLOW DASHBOARD  v{VERSION} "
     agent = f" {AGENT_NAME.upper()} "
 
     # Right: time · agent · provider
