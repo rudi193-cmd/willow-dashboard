@@ -13,6 +13,7 @@ import time
 import os
 import json
 import re
+import shutil
 import sys
 import urllib.request
 import urllib.error
@@ -969,8 +970,8 @@ def fetch_sysinfo() -> None:
             pct = int((1 - di / max(dt, 1)) * 100)
             with DATA.lock:
                 DATA.sys_cpu = max(0, min(100, pct))
-    except Exception:
-        pass
+    except Exception as ex:
+        DATA.push_log(f"sysinfo cpu error: {ex}")
 
     # MEM — MemTotal and MemAvailable from /proc/meminfo
     try:
@@ -984,12 +985,11 @@ def fetch_sysinfo() -> None:
         pct = int((total - avail) / total * 100)
         with DATA.lock:
             DATA.sys_mem = max(0, min(100, pct))
-    except Exception:
-        pass
+    except Exception as ex:
+        DATA.push_log(f"sysinfo mem error: {ex}")
 
     # DISK — root filesystem usage
     try:
-        import shutil
         usage = shutil.disk_usage("/")
         pct = int(usage.used / usage.total * 100)
         with DATA.lock:
