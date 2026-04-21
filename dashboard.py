@@ -12,6 +12,7 @@ import threading
 import time
 import os
 import json
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -21,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import soil
 import skins
 import cards as card_mod
 import shutdown as shutdown_mod
@@ -162,6 +164,17 @@ def _load_cards() -> None:
     global _CARDS
     card_mod.seed_cards()
     _CARDS = card_mod.load_cards()
+    _reload_catalog()
+
+
+def _reload_catalog() -> None:
+    global _catalog_states
+    try:
+        recs = {r["id"]: r for r in soil.all_records("willow-dashboard/cards")}
+        _catalog_states = {c.id: bool(recs.get(c.id, {}).get("enabled", False))
+                           for c in _CATALOG_SEEDS}
+    except Exception:
+        _catalog_states = {c.id: c.enabled for c in _CATALOG_SEEDS}
 
 # ── Agent identity — read from env, resolved at runtime ──────────────────────
 VERSION    = "0.2.0"
@@ -247,6 +260,7 @@ class ChatState:
         self.stream        = ""
         self.error         = None
         self.last_provider = "—"     # last model that responded
+        self.card_creation_mode = False
 
     def add(self, role, content):
         with self.lock:
@@ -433,6 +447,87 @@ def _call_fleet(messages, provider, api_key):
     return data["choices"][0]["message"]["content"]
 
 
+_CARD_CREATION_TRIGGERS = (
+    "add card", "create card", "new card", "track my", "track a",
+    "add a new card", "i'd like to add a new card",
+)
+
+_CARD_CREATION_SYSTEM = """\
+You are Heimdallr, Willow dashboard card creation assistant. Interview the user briefly then emit a card-def block.
+
+Steps:
+1. Ask: new project or import existing SOIL collection / Postgres table?
+2a. New: ask what to track, field names, status values. Suggest a slug id.
+2b. Import: ask for the collection/table name. Report schema and record count if you can infer it.
+3. Ask what to show large on the grid card (value) and optional subtitle.
+4. Ask what actions to show when the card is expanded (one key per action, type=chat or confirm).
+5. Confirm choices, then emit the card-def block.
+
+When ready, emit EXACTLY this fenced block (no extra text after the closing fence):
+```card-def
+{
+  "id": "slug",
+  "label": "Display Name",
+  "category": "work|dev|personal",
+  "soil_collection": "...",
+  "pg_table": "...",
+  "value_query": "SELECT ...",
+  "sub_query": "SELECT ...",
+  "sub_format": "{} items",
+  "state_query": "SELECT 'green'",
+  "expand_query": "SELECT ... LIMIT 50",
+  "expand_columns": ["col1", "col2"],
+  "actions": [{"key": "a", "label": "add item", "type": "chat"}],
+  "refresh_interval": 60
+}
+```
+
+SOIL SQL rules: table is always "records", JSON payload in "data" column.
+Example value_query: SELECT COUNT(*) FROM records WHERE json_extract(data,'$.status')='active' AND deleted=0
+Omit fields that don't apply. Be terse. No padding."""
+
+
+def _detect_card_creation(msg: str) -> bool:
+    low = msg.lower()
+    return any(t in low for t in _CARD_CREATION_TRIGGERS)
+
+
+def _extract_card_def(text: str) -> dict | None:
+    m = re.search(r'```card-def\s*\n(.*?)```', text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1).strip())
+    except Exception:
+        return None
+
+
+def _write_card_def(d: dict) -> str:
+    existing = card_mod.load_cards()
+    max_order = max((c.order for c in existing), default=6)
+    d.setdefault("built_in", False)
+    d.setdefault("enabled", True)
+    d.setdefault("order", max_order + 1)
+    try:
+        card = card_mod.CardDef.from_dict(d)
+        card_mod.save_card(card)
+        _load_cards()
+        return f"Card '{card.label}' added. Press r to see it on the grid."
+    except Exception as ex:
+        return f"Card write failed: {ex}"
+
+
+def _maybe_process_card_def(reply: str) -> None:
+    d = _extract_card_def(reply)
+    if d is None:
+        return
+    with CHAT.lock:
+        CHAT.card_creation_mode = False
+    msg = _write_card_def(d)
+    CHAT.add("system", msg)
+    DATA.push_log(f"card-def: {msg}")
+
+
 def send_chat(user_msg, system_override: str = ""):
     """Send a message to Heimdallr. Runs in a background thread."""
     # Check for project switch before sending to LLM
@@ -454,6 +549,10 @@ def send_chat(user_msg, system_override: str = ""):
                 CHAT.waiting = False
             return
 
+    if _detect_card_creation(user_msg):
+        with CHAT.lock:
+            CHAT.card_creation_mode = True
+
     CHAT.add("user", user_msg)
     with CHAT.lock:
         CHAT.waiting = True
@@ -463,10 +562,16 @@ def send_chat(user_msg, system_override: str = ""):
     # Build prompt with active card context if bound
     ctx_card = None
     with CHAT.lock:
-        cid = CHAT.card_context
+        cid           = CHAT.card_context
+        creation_mode = CHAT.card_creation_mode
     if cid:
         ctx_card = next((c for c in _CARDS if c.id == cid), None)
-    system_prompt = system_override if system_override else _build_system_prompt(card=ctx_card)
+    if system_override:
+        system_prompt = system_override
+    elif creation_mode:
+        system_prompt = _CARD_CREATION_SYSTEM
+    else:
+        system_prompt = _build_system_prompt(card=ctx_card)
 
     messages = [{"role": "system", "content": system_prompt}] + CHAT.visible()
 
@@ -481,6 +586,7 @@ def send_chat(user_msg, system_override: str = ""):
             if shutdown_mod.SHUTDOWN.active:
                 full = shutdown_mod.process_agent_message(full)
             CHAT.add("assistant", full)
+            _maybe_process_card_def(full)
             with CHAT.lock:
                 CHAT.waiting       = False
                 CHAT.stream        = ""
@@ -503,6 +609,7 @@ def send_chat(user_msg, system_override: str = ""):
             reply = _call_fleet(messages, provider, api_key)
             if reply:
                 CHAT.add("assistant", reply)
+                _maybe_process_card_def(reply)
                 with CHAT.lock:
                     CHAT.waiting       = False
                     CHAT.stream        = ""
@@ -539,6 +646,12 @@ class SystemData:
         self.manifests_list  = []   # list of (app_id, signed)
         self.secret_names    = []   # credential names only
         self.log             = ["Willow dashboard starting..."]
+        # sysinfo — populated by fetch_sysinfo()
+        self.sys_cpu  = 0   # 0-100 %
+        self.sys_mem  = 0   # 0-100 %
+        self.sys_disk = 0   # 0-100 %
+        self.sys_tmp  = 0   # degrees C
+        self._prev_cpu_stat: tuple[int, int] | None = None  # (total, idle)
 
     def push_log(self, msg):
         with self.lock:
@@ -834,10 +947,71 @@ def fetch_agents():
         ["name", "role"])
 
 
+def _read_proc_cpu() -> tuple[int, int]:
+    """Return (total_jiffies, idle_jiffies) from /proc/stat cpu line."""
+    with open("/proc/stat") as f:
+        parts = f.readline().split()
+    vals = [int(x) for x in parts[1:]]
+    idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
+    return sum(vals), idle
+
+
+def fetch_sysinfo() -> None:
+    # CPU — delta between two readings
+    try:
+        curr_total, curr_idle = _read_proc_cpu()
+        with DATA.lock:
+            prev = DATA._prev_cpu_stat
+            DATA._prev_cpu_stat = (curr_total, curr_idle)
+        if prev:
+            dt = curr_total - prev[0]
+            di = curr_idle - prev[1]
+            pct = int((1 - di / max(dt, 1)) * 100)
+            with DATA.lock:
+                DATA.sys_cpu = max(0, min(100, pct))
+    except Exception:
+        pass
+
+    # MEM — MemTotal and MemAvailable from /proc/meminfo
+    try:
+        info: dict[str, int] = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                info[k.strip()] = int(v.strip().split()[0])
+        total = info.get("MemTotal", 1)
+        avail = info.get("MemAvailable", total)
+        pct = int((total - avail) / total * 100)
+        with DATA.lock:
+            DATA.sys_mem = max(0, min(100, pct))
+    except Exception:
+        pass
+
+    # DISK — root filesystem usage
+    try:
+        import shutil
+        usage = shutil.disk_usage("/")
+        pct = int(usage.used / usage.total * 100)
+        with DATA.lock:
+            DATA.sys_disk = max(0, min(100, pct))
+    except Exception:
+        pass
+
+    # TEMP — first thermal zone (Linux sysfs)
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            tmp = int(f.read().strip()) // 1000
+        with DATA.lock:
+            DATA.sys_tmp = tmp
+    except Exception:
+        pass
+
+
 def refresh_all():
     with DATA.lock:
         DATA.ts = datetime.now().strftime("%H:%M:%S")
     DATA.push_log("── refreshing ──")
+    fetch_sysinfo()
     fetch_postgres()
     fetch_ollama()
     fetch_manifests()
@@ -1175,27 +1349,6 @@ def draw_overview_right(win):
     draw_panel_border(win, focused)
     win.noutrefresh()
 
-def _draw_card(win, y, x, card_h, card_w, label, value, sub, state, selected=False):
-    try:
-        sub_win = win.derwin(card_h, card_w, y, x)
-        sub_win.erase()
-        try: sub_win.border()
-        except curses.error: pass
-        if selected:
-            val_attr = curses.color_pair(C_SELECT) | curses.A_BOLD | curses.A_REVERSE
-            lbl_attr = curses.color_pair(C_SELECT)
-        else:
-            lbl_attr = curses.color_pair(C_DIM)
-            if state == "green":   val_attr = curses.color_pair(C_GREEN) | curses.A_BOLD
-            elif state == "amber": val_attr = curses.color_pair(C_AMBER) | curses.A_BOLD
-            elif state == "red":   val_attr = curses.color_pair(C_RED)   | curses.A_BOLD
-            else:                  val_attr = curses.color_pair(C_BLUE)  | curses.A_BOLD
-        safe_addstr(sub_win, 0, 2, f" {label} ", lbl_attr)
-        safe_addstr(sub_win, 1, 2, value[:card_w-3], val_attr)
-        safe_addstr(sub_win, 2, 2, sub[:card_w-3], curses.color_pair(C_DIM))
-        sub_win.noutrefresh()
-    except curses.error: pass
-
 # ── Kart page ─────────────────────────────────────────────────────────────────
 def draw_kart_left(win):
     h, w = win.getmaxyx()
@@ -1445,7 +1598,10 @@ def draw_settings_left(win):
     draw_panel_border(win, NAV.focus == "left")
     win.noutrefresh()
 
-_SKIN_IDX_OFFSET = len(_SETTINGS)  # card_idx values >= this → skin picker rows
+_SKIN_IDX_OFFSET    = len(_SETTINGS)
+_CATALOG_SEEDS      = [c for c in card_mod.CARD_SEEDS if not c.built_in]
+_CATALOG_IDX_OFFSET = _SKIN_IDX_OFFSET + len(skins.SKIN_SEEDS) + 1  # +1 for dev toggle
+_catalog_states: dict[str, bool] = {c.id: c.enabled for c in _CATALOG_SEEDS}
 
 def draw_settings_right(win):
     h, w = win.getmaxyx()
@@ -1470,8 +1626,8 @@ def draw_settings_right(win):
         for i, skin in enumerate(skins.SKIN_SEEDS):
             y = skin_y + 1 + i
             if y >= h - 1: break
-            active  = skin.id == skins.ACTIVE.id
-            sel_idx = _SKIN_IDX_OFFSET + i
+            active   = skin.id == skins.ACTIVE.id
+            sel_idx  = _SKIN_IDX_OFFSET + i
             selected = focused and NAV.card_idx == sel_idx
             if selected:
                 attr = curses.color_pair(C_SELECT) | curses.A_REVERSE
@@ -1480,11 +1636,31 @@ def draw_settings_right(win):
             else:
                 attr = curses.color_pair(C_DIM)
             marker = "▶ " if active else "  "
-            hint = "  ← active" if active else ""
+            hint   = "  ← active" if active else ""
             safe_addstr(win, y, 2, f"{marker}{skin.label}{hint}"[:w-4], attr)
 
+    # Card catalog — enable / disable optional cards
+    cat_y = skin_y + len(skins.SKIN_SEEDS) + 2
+    if cat_y < h - 2:
+        safe_addstr(win, cat_y, 1, "── Card Catalog ──", curses.color_pair(C_AMBER))
+        for i, seed in enumerate(_CATALOG_SEEDS):
+            y = cat_y + 1 + i
+            if y >= h - 1: break
+            sel_idx  = _CATALOG_IDX_OFFSET + i
+            selected = focused and NAV.card_idx == sel_idx
+            enabled  = _catalog_states.get(seed.id, False)
+            if selected:
+                attr = curses.color_pair(C_SELECT) | curses.A_REVERSE
+            elif enabled:
+                attr = curses.color_pair(C_GREEN) | curses.A_BOLD
+            else:
+                attr = curses.color_pair(C_DIM)
+            check = "[x]" if enabled else "[ ]"
+            safe_addstr(win, y, 2,
+                        f"{check} {seed.label:<20} {seed.category}"[:w-4], attr)
+
     # Developer options
-    dev_y = skin_y + len(skins.SKIN_SEEDS) + 2
+    dev_y = cat_y + len(_CATALOG_SEEDS) + 2
     if dev_y < h - 4:
         safe_addstr(win, dev_y, 1, "── Developer ──", curses.color_pair(C_AMBER))
         raw_on  = shutdown_mod.SHUTDOWN.raw_mode
@@ -1501,7 +1677,7 @@ def draw_settings_right(win):
                     curses.color_pair(C_DIM) | curses.A_DIM)
 
     # Agent list
-    agent_y = skin_y + len(skins.SKIN_SEEDS) + 5
+    agent_y = dev_y + 5
     if agent_y < h - 2:
         safe_addstr(win, agent_y, 1, "── Registered Agents ──", curses.color_pair(C_AMBER))
         for i, (name, role) in enumerate(ALL_AGENTS.items()):
@@ -1739,7 +1915,16 @@ def main(stdscr):
                                     CHAT.card_histories.get(card.id, []))
                                 CHAT.set_context(None)
                     elif NAV.focus == "right" and NAV.page == PAGE_SETTINGS:
-                        if NAV.card_idx >= _SKIN_IDX_OFFSET:
+                        if NAV.card_idx >= _CATALOG_IDX_OFFSET:
+                            cat_i = NAV.card_idx - _CATALOG_IDX_OFFSET
+                            if 0 <= cat_i < len(_CATALOG_SEEDS):
+                                seed = _CATALOG_SEEDS[cat_i]
+                                rec  = soil.get("willow-dashboard/cards", seed.id)
+                                c    = card_mod.CardDef.from_dict(rec) if rec else card_mod.CardDef.from_dict(seed.to_dict())
+                                c.enabled = not c.enabled
+                                card_mod.save_card(c)
+                                threading.Thread(target=_load_cards, daemon=True).start()
+                        elif NAV.card_idx >= _SKIN_IDX_OFFSET:
                             skin_i = NAV.card_idx - _SKIN_IDX_OFFSET
                             if 0 <= skin_i < len(skins.SKIN_SEEDS):
                                 chosen = skins.SKIN_SEEDS[skin_i]
@@ -1747,7 +1932,6 @@ def main(stdscr):
                                 skins.ACTIVE = chosen
                                 skins._apply_colors(chosen)
                             elif skin_i == len(skins.SKIN_SEEDS):
-                                # Raw mode toggle
                                 shutdown_mod.SHUTDOWN.raw_mode = not shutdown_mod.SHUTDOWN.raw_mode
                     else:
                         NAV.expanded = not NAV.expanded
@@ -1781,7 +1965,7 @@ def main(stdscr):
                             limit = getattr(NAV, "_expand_total", 0)
                             NAV.expand_row = min(max(0, limit - 1), NAV.expand_row + 1)
                         elif NAV.page == PAGE_SETTINGS:
-                            top = _SKIN_IDX_OFFSET + len(skins.SKIN_SEEDS) - 1
+                            top = _CATALOG_IDX_OFFSET + len(_CATALOG_SEEDS) - 1
                             NAV.card_idx = min(top, NAV.card_idx + 1)
                         else:
                             gcols = skins.ACTIVE.grid_columns
