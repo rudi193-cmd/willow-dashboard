@@ -145,6 +145,7 @@ class NavState:
         self.card_scroll = 0         # right panel grid scroll top row
         self.expand_row    = 0       # selected row inside expanded card
         self.confirm_action = None   # action dict pending y/n confirmation
+        self.creating_card  = False  # True while Heimdallr interview is active
         self.search    = ""
         self.searching = False
     def tab(self):
@@ -188,6 +189,26 @@ Willow system architecture:
 - SAFE: PGP-signed manifests for every professor app
 - Faculty: Ada, Gerald, Jeles, Nova, Binder, Riggs, Hanz, Steve, Oakenscroll, Copenhagen, Ofshield, Alexis
 Rules: Be terse. Name gaps explicitly. No padding. No apology. ΔΣ=42"""
+
+_CARD_CREATION_PROMPT = """\
+
+CARD CREATION MODE: The user wants to add a new dashboard card.
+Interview them to collect exactly:
+  1. Label — what should the card be called?
+  2. Source — does the data live in SOIL (SQLite) or Postgres?
+  3. Collection/table — which SOIL collection or Postgres table?
+  4. Value query — a single SQL SELECT that returns one value (the main number/text shown on the card).
+     For SOIL: SELECT json_extract(data,'$.field') FROM records WHERE ...
+     For Postgres: SELECT COUNT(*) FROM schema.table WHERE ...
+  5. (Optional) Sub-label — a second line of context (e.g. "pending tasks").
+
+Ask one question at a time. When you have all required fields, emit EXACTLY this block and nothing after it:
+```card-def
+{"id":"<slug>","label":"<Label>","category":"work","built_in":false,"enabled":true,"order":50,\
+"value_query":"<sql>","sub_format":"<sub-label or empty string>",\
+"soil_collection":"<collection or empty string>","pg_table":"<schema.table or empty string>"}
+```
+Use snake_case slug for id. Leave soil_collection empty if Postgres, pg_table empty if SOIL."""
 
 def _load_agents():
     """Merge hardcoded roles with ~/.willow/agents.json local overrides."""
@@ -319,6 +340,31 @@ def _call_fleet(messages, provider, api_key):
     return data["choices"][0]["message"]["content"]
 
 
+def _maybe_parse_card_def(reply: str) -> None:
+    """If reply contains a ```card-def block, parse it, save to SOIL, reload _CARDS."""
+    import re as _re
+    m = _re.search(r"```card-def\s*\n(\{.*?\})\s*\n```", reply, _re.DOTALL)
+    if not m:
+        return
+    if not NAV.creating_card:
+        return
+    try:
+        d = json.loads(m.group(1))
+        new_card = card_mod.CardDef.from_dict(d)
+        card_mod.save_card(new_card)
+        global _CARDS
+        _CARDS = card_mod.load_cards()
+        NAV.creating_card = False
+        NAV.card_idx = next(
+            (i for i, c in enumerate(_CARDS) if c.id == new_card.id),
+            len(_CARDS) - 1,
+        )
+        CHAT.add("system", f"Card '{new_card.label}' added to your dashboard.")
+    except Exception as ex:
+        DATA.push_log(f"card-def parse fail: {ex}")
+        CHAT.add("system", f"[card creation failed: {ex}]")
+
+
 def send_chat(user_msg):
     """Send a message to Heimdallr. Runs in a background thread."""
     CHAT.add("user", user_msg)
@@ -327,7 +373,10 @@ def send_chat(user_msg):
         CHAT.stream  = ""
         CHAT.error   = None
 
-    messages = [{"role": "system", "content": AGENT_SYSTEM}] + CHAT.visible()
+    sys_content = AGENT_SYSTEM
+    if NAV.creating_card:
+        sys_content = AGENT_SYSTEM + _CARD_CREATION_PROMPT
+    messages = [{"role": "system", "content": sys_content}] + CHAT.visible()
 
     # 1. Try Ollama streaming
     try:
@@ -341,6 +390,7 @@ def send_chat(user_msg):
             with CHAT.lock:
                 CHAT.waiting = False
                 CHAT.stream  = ""
+            _maybe_parse_card_def(full)
             return
     except Exception as ex:
         DATA.push_log(f"ollama chat fail: {ex}")
@@ -363,6 +413,7 @@ def send_chat(user_msg):
                     CHAT.waiting = False
                     CHAT.stream  = ""
                 DATA.push_log(f"chat via {provider}")
+                _maybe_parse_card_def(reply)
                 return
         except Exception as ex:
             DATA.push_log(f"{provider} fail: {ex}")
@@ -1432,7 +1483,8 @@ def main(stdscr):
                 elif key in (curses.KEY_ENTER, 10, 13):
                     if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
                         if NAV.card_idx >= len(_CARDS):
-                            # + card — seed creation prompt in chat
+                            # + card — enter creation mode, seed interview prompt
+                            NAV.creating_card = True
                             with CHAT.lock:
                                 CHAT.input = ""
                             threading.Thread(

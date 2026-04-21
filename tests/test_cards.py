@@ -2,6 +2,8 @@
 b17: WDASH  ΔΣ=42
 """
 import sys
+import json
+import re
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -155,3 +157,45 @@ def test_state_symbols_map():
     assert skins.STATE_SYMBOLS["amber"] == "▲"
     assert skins.STATE_SYMBOLS["red"]   == "✗"
     assert skins.STATE_SYMBOLS["blue"]  == "●"
+
+
+# ── card-def block parsing ─────────────────────────────────────────────────────
+
+_CARD_DEF_RE = re.compile(r"```card-def\s*\n(\{.*?\})\s*\n```", re.DOTALL)
+
+def test_card_def_block_matched():
+    reply = (
+        "Sure! Here's your card:\n"
+        "```card-def\n"
+        '{"id":"todos","label":"TODOs","category":"dev","built_in":false,"enabled":true,'
+        '"order":50,"value_query":"SELECT COUNT(*) FROM todos","sub_format":"open items",'
+        '"soil_collection":"","pg_table":"public.todos"}\n'
+        "```\n"
+    )
+    m = _CARD_DEF_RE.search(reply)
+    assert m is not None
+    d = json.loads(m.group(1))
+    assert d["id"] == "todos"
+    assert d["label"] == "TODOs"
+
+
+def test_card_def_block_not_matched_without_fence():
+    reply = '{"id":"x","label":"X","built_in":false,"enabled":true}'
+    assert _CARD_DEF_RE.search(reply) is None
+
+
+def test_card_def_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("WILLOW_STORE_ROOT", str(tmp_path))
+    card_mod.seed_cards()
+    d = {
+        "id": "my-custom", "label": "My Custom", "category": "work",
+        "built_in": False, "enabled": True, "order": 50,
+        "value_query": "SELECT COUNT(*) FROM records WHERE deleted=0",
+        "sub_format": "records", "soil_collection": "my-collection", "pg_table": "",
+    }
+    c = card_mod.CardDef.from_dict(d)
+    card_mod.save_card(c)
+    loaded = [x for x in card_mod.load_cards() if x.id == "my-custom"]
+    assert len(loaded) == 1
+    assert loaded[0].label == "My Custom"
+    assert loaded[0].soil_collection == "my-collection"
