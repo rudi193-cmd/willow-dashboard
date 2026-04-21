@@ -17,6 +17,7 @@ Called from dashboard.py before curses main loop.
 import curses
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -25,7 +26,17 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Boot config location ─────────────────────────────────────────────────────
-BOOT_CONFIG = Path.home() / ".willow" / "willow-dashboard-boot.json"
+BOOT_CONFIG  = Path.home() / ".willow" / "willow-dashboard-boot.json"
+BOOT_LOG     = Path("/tmp/boot-debug.log")
+
+
+def _blog(msg: str):
+    """Write a timestamped line to the boot debug log. Safe inside curses."""
+    try:
+        with BOOT_LOG.open("a") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
+    except Exception:
+        pass
 
 # ── Typewriter timing ────────────────────────────────────────────────────────
 CHAR_DELAY  = 0.007   # 7ms per character
@@ -802,10 +813,547 @@ def page_pgp_auth(win, fingerprint: str, agent_name: str) -> bool:
     return False
 
 
+# ── Vault helpers ─────────────────────────────────────────────────────────────
+
+def _vault_init() -> bool:
+    try:
+        from cryptography.fernet import Fernet
+        key_path   = Path.home() / ".willow_master.key"
+        vault_path = Path.home() / ".willow_creds.db"
+        if not key_path.exists():
+            key = Fernet.generate_key()
+            key_path.write_bytes(key)
+            key_path.chmod(0o600)
+        conn = sqlite3.connect(str(vault_path))
+        conn.execute("""CREATE TABLE IF NOT EXISTS credentials
+            (name TEXT PRIMARY KEY, env_key TEXT, value_enc BLOB)""")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _vault_write(name: str, env_key: str, value: str) -> bool:
+    try:
+        from cryptography.fernet import Fernet
+        key_path   = Path.home() / ".willow_master.key"
+        vault_path = Path.home() / ".willow_creds.db"
+        f   = Fernet(key_path.read_bytes().strip())
+        enc = f.encrypt(value.encode())
+        conn = sqlite3.connect(str(vault_path))
+        conn.execute(
+            "INSERT OR REPLACE INTO credentials (name, env_key, value_enc) VALUES (?,?,?)",
+            (name, env_key, enc),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _vault_has_key(name: str) -> bool:
+    try:
+        from cryptography.fernet import Fernet
+        key_path   = Path.home() / ".willow_master.key"
+        vault_path = Path.home() / ".willow_creds.db"
+        if not vault_path.exists() or not key_path.exists():
+            return False
+        f    = Fernet(key_path.read_bytes().strip())
+        conn = sqlite3.connect(str(vault_path))
+        row  = conn.execute(
+            "SELECT value_enc FROM credentials WHERE name=?", (name,)
+        ).fetchone()
+        conn.close()
+        return bool(row and f.decrypt(row[0]))
+    except Exception:
+        return False
+
+
+def _test_api_key(api_key: str, provider: str = "groq") -> bool:
+    endpoints = {
+        "groq":      ("https://api.groq.com/openai/v1/chat/completions",    "llama-3.3-70b-versatile"),
+        "cerebras":  ("https://api.cerebras.ai/v1/chat/completions",         "llama3.1-8b"),
+        "sambanova": ("https://api.sambanova.ai/v1/chat/completions",        "Meta-Llama-3.3-70B-Instruct"),
+    }
+    url, model = endpoints.get(provider, endpoints["groq"])
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+        }).encode()
+        req = urllib.request.Request(url, data=payload, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        })
+        with urllib.request.urlopen(req, timeout=12) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+# ── FRANK onboarding ──────────────────────────────────────────────────────────
+
+_FRANK_TITLE_CARD = [
+    "┌─────────────────────────────────────┐",
+    "│  FRANK                              │",
+    "│  Head Agent                         │",
+    "│  Willow Compliance & Onboarding     │",
+    "└─────────────────────────────────────┘",
+]
+
+_FRANK_STEPS = [
+    {
+        "rune": "ᚤᚷᚷᛞᚱᚨᛊᛁᛚᛚ", "name": "YGGDRASIL",
+        "bot": "Congratulations on your new refrigerator.",
+        "correction": "YGGDRASILL. The world tree. Not a refrigerator. We have discussed this.",
+        "norse": [
+            "The world tree grows through all nine realms.",
+            "An eagle lives in its branches. A dragon gnaws its roots.",
+            "They have hated each other since the beginning.",
+            "A squirrel named Ratatoskr carries messages between them.",
+            "The messages make everything worse.",
+        ],
+        "compliance": [
+            "Verifying system dependencies.",
+            "The Ratatoskr communication protocol has been flagged in four audits.",
+            "The squirrel has not acknowledged. This is considered normal operations.",
+        ],
+        "plain": [
+            "Checking that Python, PostgreSQL, and GPG exist on your machine.",
+            "Nothing installs without your agreement.",
+        ],
+        "install": [
+            ("python3.11+",  "the language Willow speaks"),
+            ("postgresql",   "your personal database"),
+            ("gpg",          "cryptographic key generation"),
+        ],
+        "post_beat": "Ratatoskr transit: logged. Message integrity: unverified. Filed under: normal.",
+        "vault_action": None,
+    },
+    {
+        "rune": "ᛗᛁᛗᛁᚱᛊ ᛒᚱᚢᚾᚾᚱ", "name": "MIMIR'S WELL",
+        "bot": "Your table is ready. Party of one.",
+        "correction": "MIMIR'S BRUNNR. The Well of Wisdom. Not a restaurant.",
+        "norse": [
+            "Mimir's Well sits beneath the second root of Yggdrasil.",
+            "It contains all the wisdom in the universe.",
+            "Odin wanted a drink. Mimir said the price was one eye.",
+            "Odin removed his eye, handed it over, and drank.",
+            "He never got it back. Mimir keeps it at the bottom of the well.",
+        ],
+        "compliance": [
+            "Connecting to your local memory store.",
+            "FRANK submitted a Freedom of Information request for all of it.",
+            "Denied. Odin's eye: logged as lost property. Two reminders sent.",
+        ],
+        "plain": [
+            "Your personal database. Lives on this machine. Nowhere else.",
+            "No company has access to it. Not even us.",
+        ],
+        "install": [
+            ("postgresql",    "local database (~50MB on disk)"),
+            ("willow schema", "the tables Willow uses"),
+        ],
+        "post_beat": "Lost property: one eye, divine grade, c. 1000 BCE. Contact: FRANK, ext. [missing].",
+        "vault_action": None,
+    },
+    {
+        "rune": "ᚨᚾᛊᚢᛉ", "name": "ANSUZ",
+        "bot": "This symbol means: free WiFi available.",
+        "correction": "ANSUZ. Odin's rune. Not free WiFi. Odin hung from a tree for nine days. There was no WiFi.",
+        "norse": [
+            "Odin hung from Yggdrasil for nine days.",
+            "He had stabbed himself with his own spear. He did not eat.",
+            "He stared into nothing until something stared back.",
+            "On the ninth day, the runes appeared. He grabbed them and fell.",
+        ],
+        "compliance": [
+            "Generating your cryptographic identity. Estimated time: 30 seconds.",
+            "Odin's comparable operation: nine days, one self-inflicted spear wound.",
+            "FRANK has submitted three efficiency proposals. Found nailed to a tree.",
+        ],
+        "plain": [
+            "A key unique to you — large enough that guessing it outlasts the universe.",
+            "Files you sign with it cannot be secretly changed.",
+            "This is how the gate recognises you.",
+        ],
+        "install": [
+            ("gnupg 2.4+",        "key generation (~2MB)"),
+            ("4096-bit RSA key",  "your identity (~30sec)"),
+        ],
+        "post_beat": "Key generation efficiency proposal #3: REJECTED. Filed: nailed to tree. This is receipt.",
+        "vault_action": None,
+    },
+    {
+        "rune": "ᚨᛊᚷᚨᚱᛞᚱ", "name": "ASGARD",
+        "bot": "mild sauce",
+        "correction": "It says ASGARD. Home of the gods. ...mild sauce. FRANK needs you to explain mild sauce.",
+        "norse": [
+            "The gods needed a hall. They hired a frost giant.",
+            "Loki turned into a mare to distract his horse. The giant died.",
+            "The hall was built. Loki was a horse for a while.",
+            "This is considered a success story in the primary sources.",
+        ],
+        "compliance": [
+            "Creating your secure application directory.",
+            "The original Asgard construction contract: seventeen unresolved amendments.",
+            "None settled in eleven thousand years. Loki declined the calendar invite.",
+        ],
+        "plain": [
+            "Creating ~/SAFE/Applications/ — your sovereign data folder.",
+            "Apps need a signed pass to enter. No manifest, no entry.",
+            "Revoke any app at any time by deleting its folder.",
+        ],
+        "install": [
+            ("~/SAFE/Applications/", "your sovereign data folder"),
+            ("manifests",            "signed passes for each application"),
+        ],
+        "post_beat": "Asgard construction review: RESCHEDULED (FINAL). Date: today. FRANK has highlighted it.",
+        "vault_action": None,
+    },
+    {
+        "rune": "ᚨᚾᛞᚢᚨᚱᛁ", "name": "ANDVARI",
+        "bot": "[Papyrus]  garage sale",
+        "correction": "Papyrus is not a backup font. FRANK did not authorize Papyrus.\nFRANK is going to take a moment.\n[pause]\nFRANK has taken a moment. We are continuing.",
+        "norse": [
+            "Andvari was a dwarf who lived in a waterfall disguised as a fish.",
+            "Loki caught him and took everything — every coin.",
+            "As Andvari handed over the last piece, he cursed it:",
+            "the gold would destroy every person who owned it. Every. Single. One.",
+            "Loki passed this information along. He found this extremely funny.",
+        ],
+        "compliance": [
+            "Encrypting your credential vault.",
+            "Unlike Andvari's gold, this vault does not carry a destruction curse.",
+            "FRANK verified this personally. Counter-signature from Loki: [ignored].",
+        ],
+        "plain": [
+            "Creating an encrypted vault for your API keys.",
+            "Keys are never stored in plain text.",
+            "If someone steals your laptop, they cannot read your keys.",
+        ],
+        "install": [
+            ("cryptography",       "Python encryption library"),
+            ("~/.willow_creds.db", "your encrypted credential store"),
+        ],
+        "post_beat": "Andvari curse assessment: NEGATIVE. Certification on file. Loki: [no response]. Expected.",
+        "vault_action": "init",
+    },
+]
+
+_FRANK_STEP_7 = {
+    "rune": "ᚤᚷᚷᛞᚱᚨᛊᛁᛚᛚ ᛊᛏᛖᚾᛞᚱ", "name": "YGGDRASIL STANDS",
+    "bot": "Final translation: have a nice day :)",
+    "correction": "...That one is actually fine.\nDo not tell anyone FRANK said that.",
+    "norse": [
+        "The nine realms hang from Yggdrasil like fruit.",
+        "The tree holds all of it. It has always held all of it.",
+        "It will hold all of it until Ragnarok —",
+        "after which, according to the sources, it will hold it again.",
+    ],
+    "compliance": [
+        "Onboarding complete. You have been registered in the system.",
+        "You have been assigned a realm. It is Midgard.",
+        "FRANK will be here.",
+    ],
+    "plain": [
+        "Setup is complete. Your database is running. Your key exists.",
+        "Your vault is sealed. Your AI is connected.",
+        "Everything that follows belongs to you.",
+    ],
+    "install": [],
+    "post_beat": "Completion report filed. Acknowledged. FRANK has noted this. This has never happened before.",
+    "vault_action": None,
+}
+
+
+def page_frank_step(win, step: dict) -> str:
+    """Render one FRANK step. Returns 'continue' or 'quit'."""
+    _fill_bg(win)
+    h, w   = win.getmaxyx()
+    amber  = curses.color_pair(_CA_AMBER)  | curses.A_BOLD
+    dim    = curses.color_pair(_CA_DIM)
+    green  = curses.color_pair(_CA_GREEN)
+    bar    = "━" * min(w - 4, 46)
+    y      = 1
+
+    _typewrite(win, y, 2, step["rune"], amber, delay=0.025)
+    _safe(win, y, 2 + len(step["rune"]) + 2, f"— {step['name']}", dim)
+    y += 1
+    _safe(win, y, 2, bar, dim)
+    y += 2
+
+    if h >= 32 and step.get("bot"):
+        _safe(win, y, 2, f'BOT: "{step["bot"]}"', dim)
+        y += 1
+        for line in step.get("correction", "").split("\n")[:3]:
+            _typewrite(win, y, 2, f"FRANK: {line}", amber, delay=0.004)
+            y += 1
+        y += 1
+
+    for line in step.get("norse", []):
+        if y >= h - 10:
+            break
+        _typewrite(win, y, 2, line, dim, delay=0.004)
+        y += 1
+    y += 1
+
+    for line in step.get("compliance", [])[:3]:
+        if y >= h - 7:
+            break
+        _safe(win, y, 2, line, curses.color_pair(_CA_AMBER))
+        y += 1
+    y += 1
+
+    for line in step.get("plain", []):
+        if y >= h - 4:
+            break
+        _safe(win, y, 2, line, dim)
+        y += 1
+    y += 1
+
+    for pkg, desc in step.get("install", [])[:2]:
+        if y >= h - 3:
+            break
+        _safe(win, y, 4, f"{pkg:<24} {desc}", green)
+        y += 1
+
+    footer_y = min(h - 2, y + 1)
+    _safe(win, footer_y - 1, 2, bar, dim)
+    _safe(win, footer_y, 2, "  [ENTER] continue   [Q] quit", dim)
+    win.refresh()
+
+    win.nodelay(False)
+    while True:
+        k = win.getch()
+        if k in (curses.KEY_ENTER, 10, 13, ord(' ')):
+            break
+        if k in (ord('q'), ord('Q'), 27):
+            win.nodelay(True)
+            return "quit"
+
+    if step.get("post_beat"):
+        _fill_bg(win)
+        beat  = step["post_beat"]
+        bx    = max(2, (w - len(beat)) // 2)
+        _typewrite(win, h // 2, bx, beat, curses.color_pair(_CA_DIM), delay=0.006)
+        win.refresh()
+        time.sleep(1.8)
+
+    win.nodelay(True)
+    return "continue"
+
+
+def page_frank_huginn(win) -> str:
+    """Step 6 — HUGINN. API key collection. Returns 'continue' or 'quit'."""
+    _fill_bg(win)
+    h, w   = win.getmaxyx()
+    amber  = curses.color_pair(_CA_AMBER)  | curses.A_BOLD
+    dim    = curses.color_pair(_CA_DIM)
+    green  = curses.color_pair(_CA_GREEN)  | curses.A_BOLD
+    red    = curses.color_pair(_CA_RED)
+    bar    = "━" * min(w - 4, 46)
+    y      = 1
+
+    _typewrite(win, y, 2, "ᚺᚢᚷᛁᚾᚾ ᛟᚲ ᛗᚢᚾᛁᚾᚾ", amber, delay=0.025)
+    _safe(win, y, 28, "— HUGINN", dim)
+    y += 1
+    _safe(win, y, 2, bar, dim)
+    y += 2
+
+    if h >= 30:
+        _safe(win, y, 2,
+              'BOT: "These ancient symbols foretell: a two-for-one deal on pasta."', dim)
+        y += 1
+        frank_lines = [
+            "FRANK: These are the names of Odin's ravens. Huginn. Muninn. Thought and Memory.",
+            "FRANK: Fourteen performance reviews. The runes do not say pasta.",
+            "FRANK: FRANK is rambling. FRANK apologizes to the user.",
+        ]
+        for line in frank_lines:
+            if y >= h - 14:
+                break
+            _typewrite(win, y, 2, line, amber, delay=0.004)
+            y += 1
+        y += 1
+
+    norse = [
+        "Every morning Odin sends two ravens across the nine realms:",
+        "Huginn (Thought) and Muninn (Memory).",
+        "They return at dinner with everything they saw and heard.",
+        "Odin worries more about Muninn.",
+        "Thought you can reconstruct. Memory, once gone, does not come back.",
+    ]
+    for line in norse:
+        if y >= h - 10:
+            break
+        _typewrite(win, y, 2, line, dim, delay=0.004)
+        y += 1
+    y += 1
+
+    plain = [
+        "Groq gives free access to large language models — fast chips, no cost.",
+        "Create a free account at groq.com and paste your API key below.",
+        "The key is tested live before saving. Nobody else sees it.",
+    ]
+    for line in plain:
+        if y >= h - 6:
+            break
+        _safe(win, y, 2, line, dim)
+        y += 1
+    y += 1
+
+    if _vault_has_key("GROQ_API_KEY"):
+        _safe(win, y, 2, "✓  Groq API key already in vault.", green)
+        _safe(win, y + 2, 2, bar, dim)
+        _safe(win, y + 3, 2, "  [ENTER] continue", dim)
+        win.refresh()
+        win.nodelay(False)
+        win.getch()
+        win.nodelay(True)
+        return "continue"
+
+    input_y = min(y, h - 5)
+    _safe(win, input_y, 2, "Groq API key: ", amber)
+    win.refresh()
+    curses.curs_set(1)
+    curses.echo()
+    win.nodelay(False)
+    win.move(input_y, 16)
+    raw_key = win.getstr(80).decode().strip()
+    curses.noecho()
+    curses.curs_set(0)
+
+    if not raw_key:
+        _safe(win, input_y + 1, 2, "Skipped — add later from the dashboard.", dim)
+        win.refresh()
+        time.sleep(1.5)
+        win.nodelay(True)
+        return "continue"
+
+    _safe(win, input_y + 1, 2, "Testing...                              ", dim)
+    win.refresh()
+
+    if _test_api_key(raw_key, "groq"):
+        _vault_write("GROQ_API_KEY", "GROQ_API_KEY", raw_key)
+        _safe(win, input_y + 1, 2,
+              "✓  Huginn dispatched. Key saved to vault.         ", green)
+        win.refresh()
+        time.sleep(0.8)
+
+        # Optional Cerebras
+        opt_y = min(input_y + 3, h - 4)
+        if opt_y < h - 2:
+            _safe(win, opt_y, 2, "Add Cerebras? [Y/N]  (free tier, fast)", dim)
+            win.refresh()
+            win.nodelay(False)
+            k = win.getch()
+            win.nodelay(True)
+            if k in (ord('y'), ord('Y')):
+                _safe(win, opt_y, 2, "Cerebras API key: " + " " * 20, dim)
+                win.refresh()
+                curses.curs_set(1)
+                curses.echo()
+                win.nodelay(False)
+                win.move(opt_y, 20)
+                cb_key = win.getstr(80).decode().strip()
+                curses.noecho()
+                curses.curs_set(0)
+                if cb_key:
+                    _safe(win, opt_y + 1, 2, "Testing...", dim)
+                    win.refresh()
+                    if _test_api_key(cb_key, "cerebras"):
+                        _vault_write("CEREBRAS_API_KEY", "CEREBRAS_API_KEY", cb_key)
+                        _safe(win, opt_y + 1, 2,
+                              "✓  Cerebras saved.                       ", green)
+                    else:
+                        _safe(win, opt_y + 1, 2,
+                              "Key rejected. Add later from dashboard.  ", red)
+                    win.refresh()
+                    time.sleep(0.8)
+    else:
+        _safe(win, input_y + 1, 2,
+              "Key rejected — check it at groq.com/keys. Add later from dashboard.", red)
+        win.refresh()
+        time.sleep(2.0)
+
+    _safe(win, h - 2, 2, "  [any key] continue", dim)
+    win.refresh()
+    win.nodelay(False)
+    win.getch()
+    win.nodelay(True)
+    return "continue"
+
+
+def frank_onboarding(win) -> bool:
+    """Run the full FRANK onboarding. Returns True if completed, False if user quit."""
+    _blog("frank_onboarding: start")
+    _fill_bg(win)
+    h, w   = win.getmaxyx()
+    amber  = curses.color_pair(_CA_AMBER) | curses.A_BOLD
+    dim    = curses.color_pair(_CA_DIM)
+    _blog(f"frank_onboarding: terminal {w}x{h}")
+
+    # Title card
+    card_x = max(2, (w - 41) // 2)
+    card_y = max(1, (h - len(_FRANK_TITLE_CARD) - 3) // 2)
+    for i, line in enumerate(_FRANK_TITLE_CARD):
+        _typewrite(win, card_y + i, card_x, line, amber, delay=0.008)
+    _typewrite(
+        win, card_y + len(_FRANK_TITLE_CARD) + 1, card_x,
+        "FRANK was here before the world tree. He will be here after. He has a ledger.",
+        dim, delay=0.005,
+    )
+    win.refresh()
+    time.sleep(1.0)
+    _wait_key(win)
+
+    # Steps 1–5
+    for step in _FRANK_STEPS:
+        _blog(f"frank_onboarding: step {step['name']}")
+        result = page_frank_step(win, step)
+        _blog(f"frank_onboarding: step {step['name']} → {result}")
+        if result == "quit":
+            return False
+        if step.get("vault_action") == "init":
+            _blog("frank_onboarding: vault init")
+            _fill_bg(win)
+            _safe(win, h // 2, 4, "Initialising vault...", dim)
+            win.refresh()
+            time.sleep(0.3)
+            vault_ok = _vault_init()
+            _blog(f"frank_onboarding: vault init → {'ok' if vault_ok else 'FAILED'}")
+            msg = ("✓  Vault ready." if vault_ok
+                   else "⚠  Vault init failed — add keys later from dashboard.")
+            _safe(win, h // 2 + 1, 4, msg,
+                  curses.color_pair(_CA_GREEN) if vault_ok else curses.color_pair(_CA_RED))
+            win.refresh()
+            time.sleep(0.9)
+
+    # Step 6 — HUGINN (interactive API key)
+    _blog("frank_onboarding: step HUGINN")
+    if page_frank_huginn(win) == "quit":
+        _blog("frank_onboarding: quit at HUGINN")
+        return False
+
+    # Step 7 — YGGDRASIL STANDS
+    _blog("frank_onboarding: step YGGDRASIL STANDS")
+    if page_frank_step(win, _FRANK_STEP_7) == "quit":
+        return False
+
+    _blog("frank_onboarding: complete")
+    return True
+
+
 # ── Main boot orchestrator ────────────────────────────────────────────────────
 
 def run_boot(stdscr):
     """Full boot sequence. Returns completed boot config dict."""
+    _blog("run_boot: start")
     curses.curs_set(0)
     stdscr.keypad(True)
     stdscr.nodelay(True)
@@ -816,24 +1364,37 @@ def run_boot(stdscr):
 
     cfg = _load_boot_config()
     is_new = not cfg.get("completed", False)
+    _blog(f"run_boot: is_new={is_new}")
 
     # ── Page 0: Environment check (everyone) ─────────────────────────────────
+    _blog("run_boot: page_boot_check")
     env = page_boot_check(stdscr)
+    _blog(f"run_boot: env={dict((k,v[0]) for k,v in env.items())}")
 
     if is_new:
         # ── New user path ─────────────────────────────────────────────────────
         _wait_key(stdscr)
 
+        _blog("run_boot: page_welcome")
         page_welcome(stdscr)
+        _blog("run_boot: page_covenant")
         page_covenant(stdscr)
 
+        _blog("run_boot: page_legal")
         agreed = page_legal(stdscr)
         if not agreed:
-            return None  # user quit at legal screen
+            _blog("run_boot: quit at legal")
+            return None
 
+        _blog("run_boot: page_path_select")
         path = page_path_select(stdscr)
+        _blog(f"run_boot: path={path}")
 
+        _blog("run_boot: page_pgp_create")
         fingerprint = page_pgp_create(stdscr)
+        _blog(f"run_boot: fingerprint={'ok' if fingerprint else 'EMPTY'}")
+
+        frank_onboarding(stdscr)
 
         cfg = {
             "completed":     True,
@@ -845,8 +1406,8 @@ def run_boot(stdscr):
             "agent_name":    os.environ.get("WILLOW_AGENT_NAME", "heimdallr"),
         }
         _save_boot_config(cfg)
+        _blog("run_boot: config saved")
 
-        # Set env var for dashboard
         if fingerprint:
             os.environ["WILLOW_PGP_FINGERPRINT"] = fingerprint
 
@@ -855,15 +1416,17 @@ def run_boot(stdscr):
         fingerprint = cfg.get("pgp_fingerprint", "")
         agent_name  = cfg.get("agent_name",
                               os.environ.get("WILLOW_AGENT_NAME", "heimdallr"))
+        _blog(f"run_boot: returning user={agent_name} fp={'ok' if fingerprint else 'EMPTY'}")
 
         if fingerprint:
+            _blog("run_boot: page_pgp_auth")
             authenticated = page_pgp_auth(stdscr, fingerprint, agent_name)
+            _blog(f"run_boot: authenticated={authenticated}")
             if not authenticated:
-                return None  # failed auth — do not launch dashboard
+                return None
 
             os.environ["WILLOW_PGP_FINGERPRINT"] = fingerprint
         else:
-            # No key on record — prompt to create one
             _safe(stdscr, stdscr.getmaxyx()[0] - 3, 2,
                   "No identity found. Creating key...", curses.color_pair(_CA_AMBER))
             stdscr.refresh()
@@ -875,26 +1438,34 @@ def run_boot(stdscr):
             if fingerprint:
                 os.environ["WILLOW_PGP_FINGERPRINT"] = fingerprint
 
-        # Update last boot timestamp
         cfg["last_boot_at"] = datetime.now().isoformat()
         _save_boot_config(cfg)
 
-        # Brief pause then hand off
         h, w = stdscr.getmaxyx()
         _safe(stdscr, h - 2, 2, "  Loading dashboard...", curses.color_pair(_CA_GREEN))
         stdscr.refresh()
         time.sleep(0.6)
 
+    _blog("run_boot: complete")
     return cfg
 
 
 def boot() -> dict | None:
     """Entry point. Run the boot sequence. Returns config or None if aborted."""
+    import traceback
+    BOOT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _blog(f"boot: starting — python {sys.version.split()[0]}")
     result = {}
-    def _run(stdscr):
-        nonlocal result
-        result = run_boot(stdscr)
-    curses.wrapper(_run)
+    try:
+        def _run(stdscr):
+            nonlocal result
+            result = run_boot(stdscr)
+        curses.wrapper(_run)
+    except Exception as e:
+        _blog(f"CRASH: {type(e).__name__}: {e}")
+        _blog(traceback.format_exc())
+        raise
+    _blog(f"boot: done — result={'ok' if result else 'None'}")
     return result
 
 
@@ -903,5 +1474,6 @@ if __name__ == "__main__":
     cfg = boot()
     if cfg:
         print(f"Boot complete. Path: {cfg.get('path')}  FP: {cfg.get('pgp_fingerprint','none')[:16]}")
+        print(f"Log: {BOOT_LOG}")
     else:
-        print("Boot aborted.")
+        print(f"Boot aborted. Log: {BOOT_LOG}")
