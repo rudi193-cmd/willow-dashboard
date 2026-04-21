@@ -515,7 +515,8 @@ def _draw_plus_card(win, y: int, x: int, w: int, h: int, is_selected: bool) -> N
 # ── Expanded card renderer ────────────────────────────────────────────────────
 
 def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int,
-                       confirm_action: dict = None) -> int:
+                       confirm_action: dict = None,
+                       session_atom: dict = None) -> int:
     """Fill `win` with the expanded card view. Returns total data row count."""
     skin = skins.ACTIVE
     h, w = win.getmaxyx()
@@ -524,10 +525,18 @@ def draw_expanded_card(win, card: CardDef, row_offset: int, sel_row: int,
 
     # Title bar
     title = f"  {card.label}  "
+    # Show last session timestamp in top-right if available
+    left_off = session_atom.get("left_off_at", "") if session_atom else ""
+    ts_note  = f"  last: {left_off}  " if left_off else ""
     try:
         win.addstr(0, 0, title, curses.color_pair(skins.C_HEADER) | curses.A_BOLD | curses.A_REVERSE)
-        win.addstr(0, len(title), " " * (w - len(title)),
-                   curses.color_pair(skins.C_HEADER) | curses.A_REVERSE)
+        fill_len = w - len(title) - len(ts_note)
+        if fill_len > 0:
+            win.addstr(0, len(title), " " * fill_len,
+                       curses.color_pair(skins.C_HEADER) | curses.A_REVERSE)
+        if ts_note and w > len(title) + len(ts_note):
+            win.addstr(0, w - len(ts_note),
+                       ts_note, curses.color_pair(skins.C_DIM) | curses.A_REVERSE)
     except curses.error:
         pass
 

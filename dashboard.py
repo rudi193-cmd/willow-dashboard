@@ -204,33 +204,143 @@ def _load_agents():
 ALL_AGENTS = _load_agents()
 
 
-def _build_system_prompt(agent_name=None):
+def _build_system_prompt(agent_name=None, card=None) -> str:
     name = agent_name or AGENT_NAME
     role = ALL_AGENTS.get(name, "Willow system agent.")
-    return f"You are {name.capitalize()}. {role}\n\n{_WILLOW_CONTEXT}"
+    base = f"You are {name.capitalize()}. {role}\n\n{_WILLOW_CONTEXT}"
+    if card is None:
+        return base
+    # Inject live card context
+    cached  = card_mod.cache_get(card.id)
+    session = _load_session_atom(card.id)
+    left_off = session.get("left_off_at", "")
+    last_chat = session.get("last_chat", "")
+    src = f"pg:{card.pg_table}" if card.pg_table else f"soil:{card.soil_collection}" if card.soil_collection else "runtime"
+    ctx_lines = [
+        f"\nActive project: {card.label}  [{card.id}]",
+        f"  Value: {cached.get('value','—')}  {cached.get('sub','')}  ({cached.get('state','')})".rstrip(),
+        f"  Data source: {src}",
+    ]
+    if card.actions:
+        ctx_lines.append("  Actions: " + ", ".join(f"{a['key']}={a['label']}" for a in card.actions))
+    if left_off:
+        ctx_lines.append(f"  Last session: {left_off}")
+    if last_chat:
+        ctx_lines.append(f"  Last exchange: {last_chat}")
+    return base + "\n" + "\n".join(ctx_lines)
 
 AGENT_SYSTEM = _build_system_prompt()
 
 # ── Chat state ────────────────────────────────────────────────────────────────
 class ChatState:
     def __init__(self):
-        self.lock    = threading.Lock()
-        self.history = []          # [{role, content}]
-        self.input   = ""          # current typed input
-        self.typing  = False       # input box active
-        self.waiting = False       # awaiting LLM response
-        self.stream  = ""          # current streaming buffer
-        self.error   = None
+        self.lock          = threading.Lock()
+        self.history       = []        # global [{role, content}]
+        self.card_histories = {}       # {card_id: [{role, content}]}
+        self.card_context  = None      # card_id currently bound, or None
+        self.input         = ""
+        self.typing        = False
+        self.waiting       = False
+        self.stream        = ""
+        self.error         = None
 
     def add(self, role, content):
         with self.lock:
             self.history.append({"role": role, "content": content})
+            if self.card_context:
+                self.card_histories.setdefault(self.card_context, [])
+                self.card_histories[self.card_context].append({"role": role, "content": content})
+
+    def set_context(self, card_id: str | None):
+        """Switch active card context, persisting outgoing history."""
+        with self.lock:
+            if self.card_context and self.card_context != card_id:
+                _persist_card_history(self.card_context,
+                                      self.card_histories.get(self.card_context, []))
+            self.card_context = card_id
+            if card_id and card_id not in self.card_histories:
+                self.card_histories[card_id] = _load_card_history(card_id)
 
     def visible(self, n=30):
         with self.lock:
+            if self.card_context:
+                hist = self.card_histories.get(self.card_context, [])
+                return list(hist[-n:])
             return list(self.history[-n:])
 
 CHAT = ChatState()
+
+# ── Session atoms + card chat persistence ────────────────────────────────────
+
+def _persist_card_history(card_id: str, history: list) -> None:
+    """Save the last 50 messages for a card to SOIL."""
+    if not history:
+        return
+    try:
+        soil.put("willow-dashboard/chat", card_id, {"messages": history[-50:]})
+    except Exception:
+        pass
+
+
+def _load_card_history(card_id: str) -> list:
+    """Load saved chat history for a card from SOIL."""
+    try:
+        rec = soil.get("willow-dashboard/chat", card_id)
+        return rec.get("messages", []) if rec else []
+    except Exception:
+        return []
+
+
+def _write_session_atom(card) -> None:
+    """Write a brief 'left off here' atom when collapsing a card. Fire-and-forget."""
+    try:
+        cached  = card_mod.cache_get(card.id)
+        last_msg = ""
+        with CHAT.lock:
+            hist = CHAT.card_histories.get(card.id, [])
+            if hist:
+                last_msg = hist[-1].get("content", "")[:120]
+        atom = {
+            "card_id":    card.id,
+            "label":      card.label,
+            "left_off_at": datetime.now().isoformat(timespec="seconds"),
+            "value":      cached.get("value", "—"),
+            "sub":        cached.get("sub", ""),
+            "state":      cached.get("state", ""),
+            "expand_row": NAV.expand_row,
+            "last_chat":  last_msg,
+        }
+        soil.put("willow-dashboard/sessions", card.id, atom)
+        DATA.push_log(f"session saved: {card.label}")
+    except Exception as ex:
+        DATA.push_log(f"session atom error: {ex}")
+
+
+def _load_session_atom(card_id: str) -> dict:
+    """Retrieve the last saved session atom for a card."""
+    try:
+        return soil.get("willow-dashboard/sessions", card_id) or {}
+    except Exception:
+        return {}
+
+
+# ── Switch-context detection ─────────────────────────────────────────────────
+_SWITCH_WORDS = ("switch to", "work on", "open", "go to", "jump to",
+                 "let's do", "back to", "focus on")
+
+def _detect_switch(msg: str) -> str | None:
+    """Return a card_id if the message is a project-switch request, else None."""
+    low = msg.lower().strip()
+    for phrase in _SWITCH_WORDS:
+        if low.startswith(phrase):
+            target = low[len(phrase):].strip().rstrip(".,!")
+            # fuzzy match against card labels and ids
+            for card in _CARDS:
+                if (target in card.label.lower() or
+                        target in card.id.lower() or
+                        card.label.lower() in target):
+                    return card.id
+    return None
 
 
 def _get_vault_key(name):
@@ -321,13 +431,40 @@ def _call_fleet(messages, provider, api_key):
 
 def send_chat(user_msg):
     """Send a message to Heimdallr. Runs in a background thread."""
+    # Check for project switch before sending to LLM
+    switch_id = _detect_switch(user_msg)
+    if switch_id:
+        target_card = next((c for c in _CARDS if c.id == switch_id), None)
+        if target_card:
+            CHAT.set_context(switch_id)
+            session = _load_session_atom(switch_id)
+            cached  = card_mod.cache_get(switch_id)
+            note    = session.get("left_off_at", "")
+            last    = session.get("last_chat", "")
+            lines   = [f"Switching to {target_card.label}."]
+            lines.append(f"  {cached.get('value','—')}  {cached.get('sub','')}".rstrip())
+            if note:  lines.append(f"  Last session: {note}")
+            if last:  lines.append(f"  Last: {last}")
+            CHAT.add("system", "\n".join(lines))
+            with CHAT.lock:
+                CHAT.waiting = False
+            return
+
     CHAT.add("user", user_msg)
     with CHAT.lock:
         CHAT.waiting = True
         CHAT.stream  = ""
         CHAT.error   = None
 
-    messages = [{"role": "system", "content": AGENT_SYSTEM}] + CHAT.visible()
+    # Build prompt with active card context if bound
+    ctx_card = None
+    with CHAT.lock:
+        cid = CHAT.card_context
+    if cid:
+        ctx_card = next((c for c in _CARDS if c.id == cid), None)
+    system_prompt = _build_system_prompt(card=ctx_card)
+
+    messages = [{"role": "system", "content": system_prompt}] + CHAT.visible()
 
     # 1. Try Ollama streaming
     try:
@@ -929,7 +1066,8 @@ def draw_overview_right(win):
     if NAV.expanded and focused and 0 <= NAV.card_idx < len(enabled):
         card = enabled[NAV.card_idx]
         row_count = card_mod.draw_expanded_card(win, card, NAV.expand_row, NAV.expand_row,
-                                                confirm_action=NAV.confirm_action)
+                                                confirm_action=NAV.confirm_action,
+                                                session_atom=_load_session_atom(card.id))
         NAV._expand_total = row_count
     else:
         NAV.card_scroll = card_mod.draw_card_grid(win, enabled, NAV.card_idx, NAV.card_scroll)
@@ -1427,8 +1565,19 @@ def main(stdscr):
                 elif key == 9:                        # Tab — cycle focus
                     NAV.tab()
                 elif key == 27:                       # Esc
-                    if NAV.expanded: NAV.expanded = False
-                    else: NAV.focus = None
+                    if NAV.expanded:
+                        # Write session atom then collapse
+                        if (NAV.page == PAGE_OVERVIEW and
+                                0 <= NAV.card_idx < len(_CARDS)):
+                            card = _CARDS[NAV.card_idx]
+                            threading.Thread(target=_write_session_atom,
+                                             args=(card,), daemon=True).start()
+                            _persist_card_history(card.id,
+                                CHAT.card_histories.get(card.id, []))
+                            CHAT.set_context(None)
+                        NAV.expanded = False
+                    else:
+                        NAV.focus = None
                 elif key in (curses.KEY_ENTER, 10, 13):
                     if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
                         if NAV.card_idx >= len(_CARDS):
@@ -1442,8 +1591,18 @@ def main(stdscr):
                             ).start()
                             NAV.focus = "left"
                         else:
-                            NAV.expanded = not NAV.expanded
+                            expanding = not NAV.expanded
+                            NAV.expanded  = expanding
                             NAV.expand_row = 0
+                            card = _CARDS[NAV.card_idx]
+                            if expanding:
+                                CHAT.set_context(card.id)
+                            else:
+                                threading.Thread(target=_write_session_atom,
+                                                 args=(card,), daemon=True).start()
+                                _persist_card_history(card.id,
+                                    CHAT.card_histories.get(card.id, []))
+                                CHAT.set_context(None)
                     elif NAV.focus == "right" and NAV.page == PAGE_SETTINGS:
                         if NAV.card_idx >= _SKIN_IDX_OFFSET:
                             skin_i = NAV.card_idx - _SKIN_IDX_OFFSET
