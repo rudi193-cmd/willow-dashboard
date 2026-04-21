@@ -1700,4 +1700,12 @@ def main(stdscr):
         stop_evt.set()
 
 if __name__ == "__main__":
+    import boot as _boot
+    if "--skip-boot" not in sys.argv:
+        boot_cfg = _boot.boot()
+        if boot_cfg is None:
+            sys.exit(0)
+        # Apply boot config to environment
+        if boot_cfg.get("agent_name"):
+            os.environ.setdefault("WILLOW_AGENT_NAME", boot_cfg["agent_name"])
     curses.wrapper(main)
