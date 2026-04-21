@@ -145,8 +145,9 @@ class NavState:
         self.card_scroll = 0         # right panel grid scroll top row
         self.expand_row    = 0       # selected row inside expanded card
         self.confirm_action = None   # action dict pending y/n confirmation
-        self.search    = ""
-        self.searching = False
+        self.search      = ""
+        self.searching   = False
+        self.quit_confirm = False   # waiting for second q to confirm exit
     def tab(self):
         self.focus = {"right": None, "left": "right", None: "left"}[self.focus]
         self.expanded = False
@@ -978,11 +979,19 @@ def draw_page_bar(stdscr):
             try: stdscr.addstr(y, x, label, attr)
             except curses.error: pass
             x += len(label) + 1
-    hint = " Tab=focus ←→=page Enter=expand Esc=back q=quit "
-    hx = w - len(hint) - 1
-    if hx > x:
-        try: stdscr.addstr(y, hx, hint, curses.color_pair(C_DIM))
-        except curses.error: pass
+    if NAV.quit_confirm:
+        hint = "  Press Q again to quit — any other key to cancel  "
+        hx = w - len(hint) - 1
+        if hx > x:
+            try: stdscr.addstr(y, hx, hint,
+                               curses.color_pair(C_AMBER) | curses.A_BOLD | curses.A_REVERSE)
+            except curses.error: pass
+    else:
+        hint = " Tab=focus ←→=page Enter=expand Esc=back qq=quit "
+        hx = w - len(hint) - 1
+        if hx > x:
+            try: stdscr.addstr(y, hx, hint, curses.color_pair(C_DIM))
+            except curses.error: pass
 
 # ── Overview page ─────────────────────────────────────────────────────────────
 def draw_overview_left(win):
@@ -1555,8 +1564,13 @@ def main(stdscr):
             else:
                 # ── Global keys ──
                 if key == ord('q'):
-                    break
-                elif key == ord('r'):
+                    if NAV.quit_confirm:
+                        break
+                    else:
+                        NAV.quit_confirm = True
+                elif NAV.quit_confirm:
+                    NAV.quit_confirm = False   # any other key cancels
+                if key == ord('r') and not NAV.quit_confirm:
                     threading.Thread(target=refresh_all, daemon=True).start()
                     threading.Thread(target=_load_cards, daemon=True).start()
                     DATA.push_log("manual refresh")
@@ -1702,10 +1716,11 @@ def main(stdscr):
 if __name__ == "__main__":
     import boot as _boot
     if "--skip-boot" not in sys.argv:
+        if "--force-setup" in sys.argv:
+            _boot.BOOT_CONFIG.unlink(missing_ok=True)
         boot_cfg = _boot.boot()
         if boot_cfg is None:
             sys.exit(0)
-        # Apply boot config to environment
         if boot_cfg.get("agent_name"):
             os.environ.setdefault("WILLOW_AGENT_NAME", boot_cfg["agent_name"])
     curses.wrapper(main)
