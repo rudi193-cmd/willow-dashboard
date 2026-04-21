@@ -1043,6 +1043,7 @@ def draw_hline(win, y, attr=0):
 
 def _ascii_bar(pct: int, width: int = 8) -> str:
     """Return a filled/empty block bar string representing pct (0-100)."""
+    pct = max(0, min(100, pct))
     filled = round(pct / 100 * width)
     return "█" * filled + "░" * (width - filled)
 

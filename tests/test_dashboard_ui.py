@@ -1,4 +1,6 @@
-"""Tests for dashboard UI helpers and sysinfo fetch."""
+"""Tests for dashboard UI helpers and sysinfo fetch.
+b17: WDASH  ΔΣ=42
+"""
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
