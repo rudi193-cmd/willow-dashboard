@@ -12,6 +12,7 @@ import threading
 import time
 import os
 import json
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -340,10 +341,18 @@ def _call_fleet(messages, provider, api_key):
     return data["choices"][0]["message"]["content"]
 
 
+_CARD_CREATE_VERBS = re.compile(
+    r"\b(add|create|make|new)\b.{0,40}\bcard\b|\bcard\b.{0,40}\b(add|create|make|new)\b",
+    re.IGNORECASE,
+)
+
+def _detect_card_creation_intent(msg: str) -> bool:
+    return bool(_CARD_CREATE_VERBS.search(msg))
+
+
 def _maybe_parse_card_def(reply: str) -> None:
     """If reply contains a ```card-def block, parse it, save to SOIL, reload _CARDS."""
-    import re as _re
-    m = _re.search(r"```card-def\s*\n(\{.*?\})\s*\n```", reply, _re.DOTALL)
+    m = re.search(r"```card-def\s*\n(\{.*?\})\s*\n```", reply, re.DOTALL)
     if not m:
         return
     if not NAV.creating_card:
@@ -367,6 +376,8 @@ def _maybe_parse_card_def(reply: str) -> None:
 
 def send_chat(user_msg):
     """Send a message to Heimdallr. Runs in a background thread."""
+    if not NAV.creating_card and _detect_card_creation_intent(user_msg):
+        NAV.creating_card = True
     CHAT.add("user", user_msg)
     with CHAT.lock:
         CHAT.waiting = True

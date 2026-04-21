@@ -199,3 +199,39 @@ def test_card_def_roundtrip(tmp_path, monkeypatch):
     assert len(loaded) == 1
     assert loaded[0].label == "My Custom"
     assert loaded[0].soil_collection == "my-collection"
+
+
+# ── NL intent detection ────────────────────────────────────────────────────────
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+_CARD_CREATE_VERBS = re.compile(
+    r"\b(add|create|make|new)\b.{0,40}\bcard\b|\bcard\b.{0,40}\b(add|create|make|new)\b",
+    re.IGNORECASE,
+)
+
+def _detect(msg):
+    return bool(_CARD_CREATE_VERBS.search(msg))
+
+@pytest.mark.parametrize("msg", [
+    "add a card for my todos",
+    "create a card to track open PRs",
+    "make a new card for reading list",
+    "I'd like a new card",
+    "can you add a dashboard card for habits",
+    "card — add one for my goals",
+])
+def test_intent_detected(msg):
+    assert _detect(msg)
+
+@pytest.mark.parametrize("msg", [
+    "how many cards do I have",
+    "show me the kart card",
+    "what is the knowledge card showing",
+    "I want to update my notes",
+    "add more detail to your response",
+    "the card looks great",
+])
+def test_intent_not_detected(msg):
+    assert not _detect(msg)
