@@ -187,7 +187,7 @@ The `accessible` skin is the only one that changes rendering behavior — it pre
 
 ## 6. What Doesn't Change
 
-- The Hero Bar (willow animation, LIVE indicator, agent name, Heimdallr chat) is fixed. Skins may change the tree color but not the layout or presence of the Hero Bar.
+- The Hero Bar (willow animation, LIVE indicator, agent name, Heimdallr chat) is fixed. Skins may NOT change the tree color or the layout or presence of the Hero Bar.
 - The page navigation (1-9 keys, page tab bar) is unchanged.
 - Existing pages (Kart, Knowledge, Yggdrasil, etc.) remain as full pages — the Overview cards are summaries that link into them.
 

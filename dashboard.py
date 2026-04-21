@@ -149,6 +149,7 @@ class NavState:
         self.card_scroll = 0         # right panel grid scroll top row
         self.expand_row    = 0       # selected row inside expanded card
         self.confirm_action = None   # action dict pending y/n confirmation
+        self.creating_card  = False  # True while Heimdallr interview is active
         self.search      = ""
         self.searching   = False
         self.quit_confirm = False   # waiting for second q to confirm exit
@@ -205,6 +206,7 @@ Willow system architecture:
 - SAFE: PGP-signed manifests for every professor app
 - Faculty: Ada, Gerald, Jeles, Nova, Binder, Riggs, Hanz, Steve, Oakenscroll, Copenhagen, Ofshield, Alexis
 Rules: Be terse. Name gaps explicitly. No padding. No apology. ΔΣ=42"""
+
 
 def _load_agents():
     """Merge hardcoded roles with ~/.willow/agents.json local overrides."""
@@ -2025,7 +2027,8 @@ def main(stdscr):
                 elif key in (curses.KEY_ENTER, 10, 13):
                     if NAV.focus == "right" and NAV.page == PAGE_OVERVIEW:
                         if NAV.card_idx >= len(_CARDS):
-                            # + card — seed creation prompt in chat
+                            # + card — enter creation mode, seed interview prompt
+                            NAV.creating_card = True
                             with CHAT.lock:
                                 CHAT.input = ""
                             threading.Thread(
