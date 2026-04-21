@@ -1413,6 +1413,18 @@ def draw_overview_right(win):
         mem       = DATA.sys_mem
         tmp       = DATA.sys_tmp
 
+    # Expanded card view takes over the whole panel
+    if NAV.expanded and focused and 0 <= NAV.card_idx < len(_CARDS):
+        card = _CARDS[NAV.card_idx]
+        row_count = card_mod.draw_expanded_card(
+            win, card, NAV.expand_row, NAV.expand_row,
+            confirm_action=NAV.confirm_action,
+            session_atom=_load_session_atom(card.id))
+        NAV._expand_total = row_count
+        draw_panel_border(win, focused)
+        win.noutrefresh()
+        return
+
     # ── Compact STATUS strip (one line per system) ────────────────────────────
     y = 0
     _section_header(win, y, "STATUS"); y += 1
@@ -1929,6 +1941,8 @@ def main(stdscr):
                 elif key == 9:                       # Tab — move focus to right panel
                     NAV.tab()
                     continue
+                elif key == ord('q'):                # Let qq quit even from chat mode
+                    pass
                 elif 32 <= key <= 126:
                     with CHAT.lock: CHAT.input += chr(key)
                     continue
