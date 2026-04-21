@@ -22,3 +22,21 @@ def test_fetch_sysinfo_populates_data():
     assert isinstance(dashboard.DATA.sys_disk, int)
     assert 0 <= dashboard.DATA.sys_disk <= 100
     assert isinstance(dashboard.DATA.sys_tmp, int)
+
+
+def test_ascii_bar_empty():
+    assert dashboard._ascii_bar(0, 8) == "░░░░░░░░"
+
+
+def test_ascii_bar_full():
+    assert dashboard._ascii_bar(100, 8) == "████████"
+
+
+def test_ascii_bar_half():
+    assert dashboard._ascii_bar(50, 8) == "████░░░░"
+
+
+def test_ascii_bar_width():
+    result = dashboard._ascii_bar(75, 10)
+    assert len(result) == 10
+    assert result.count("█") == 8  # round(75/100*10) = 7.5 rounds to 8

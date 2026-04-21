@@ -1041,6 +1041,24 @@ def draw_hline(win, y, attr=0):
     try: win.hline(y, 0, curses.ACS_HLINE, w - 1, attr)
     except curses.error: pass
 
+def _ascii_bar(pct: int, width: int = 8) -> str:
+    """Return a filled/empty block bar string representing pct (0-100)."""
+    filled = round(pct / 100 * width)
+    return "█" * filled + "░" * (width - filled)
+
+def _section_header(win, y: int, label: str) -> None:
+    """Draw a full-width ── LABEL ──── rule at row y."""
+    h, w = win.getmaxyx()
+    if y < 0 or y >= h:
+        return
+    prefix = f"── {label} "
+    fill = max(0, w - len(prefix) - 1)
+    line = prefix + "─" * fill
+    try:
+        win.addstr(y, 0, line[:w - 1], curses.color_pair(C_BLUE) | curses.A_BOLD)
+    except curses.error:
+        pass
+
 def draw_panel_border(win, focused):
     attr = (curses.color_pair(C_AMBER) | curses.A_BOLD) if focused else \
            (curses.color_pair(C_DIM) | curses.A_DIM)
