@@ -40,6 +40,15 @@ C_RED      = 7
 C_BROWN    = 8
 C_SELECT   = 9   # selected card / focused item
 
+# Sender/agent hash palette — 7 stable colors (pairs 11-17)
+C_HASH_1 = 11  # cyan
+C_HASH_2 = 12  # magenta
+C_HASH_3 = 13  # yellow
+C_HASH_4 = 14  # green
+C_HASH_5 = 15  # blue
+C_HASH_6 = 16  # red
+C_HASH_7 = 17  # cyan (bold variant)
+
 # ── Pages ────────────────────────────────────────────────────────────────────
 PAGE_OVERVIEW   = 0
 PAGE_KART       = 1
