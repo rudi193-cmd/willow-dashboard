@@ -684,6 +684,14 @@ def _fmt(n):
         if n >= 1_000:     return f"{n/1_000:.0f}K"
     return str(n)
 
+def _fmt_age(secs: int) -> str:
+    """Return a compact age string: '30s', '5m', '2h'."""
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h"
+
 def _pg_connect():
     """Connect to Postgres via Unix socket (peer auth) or WILLOW_DB_URL if set."""
     import psycopg2
@@ -1425,6 +1433,83 @@ def draw_shutdown_right(win):
 
     draw_panel_border(win, False)
     win.noutrefresh()
+
+
+def _draw_agents_region(win, y: int, w: int, agents: list) -> int:
+    """Draw AGENTS region. Returns next y after region."""
+    import grove_reader as _gr
+    _section_header(win, y, "AGENTS"); y += 1
+    visible = [a for a in agents if a.get("age_secs", 9999) < 3600]
+    if not visible:
+        safe_addstr(win, y, 2, "no active agents", curses.color_pair(C_DIM))
+        return y + 1
+    for agent in visible[:4]:
+        sender   = agent["sender"]
+        age_secs = agent.get("age_secs", 0)
+        if age_secs < 120:
+            state, state_col = "running", C_GREEN
+        elif age_secs < 900:
+            state, state_col = "idle   ", C_DIM
+        else:
+            state, state_col = "stale  ", C_DIM
+        age_str  = _fmt_age(age_secs)
+        col      = curses.color_pair(_gr.color_for_sender(sender))
+        name_w   = max(1, w - 20)
+        safe_addstr(win, y, 2, sender[:name_w], col)
+        safe_addstr(win, y, 2 + name_w, f" {state} {age_str:>4}",
+                    curses.color_pair(state_col))
+        y += 1
+    return y
+
+
+def _draw_routing_region(win, y: int, w: int, decisions: list) -> int:
+    """Draw ROUTING region. Returns next y after region."""
+    import grove_reader as _gr
+    _section_header(win, y, "ROUTING"); y += 1
+    if not decisions:
+        safe_addstr(win, y, 2, "no routing decisions yet this session",
+                    curses.color_pair(C_DIM))
+        return y + 1
+    for d in decisions[:6]:
+        ts = d.get("ts")
+        ts_str = ts.strftime("%H:%M") if hasattr(ts, "strftime") else str(ts)[:5]
+        snippet = (d.get("prompt_snippet") or "")[:35]
+        target  = d.get("routed_to") or "?"
+        conf    = d.get("confidence", 1.0)
+        col     = curses.color_pair(_gr.color_for_sender(target))
+        dim     = curses.A_DIM if conf < 0.7 else 0
+        line    = f"{ts_str}  \"{snippet}\"  → {target}"
+        safe_addstr(win, y, 2, line[:w - 3], col | dim)
+        y += 1
+    return y
+
+
+def _draw_grove_region(win, y: int, w: int, channels: list) -> int:
+    """Draw GROVE region. Returns next y after region."""
+    _section_header(win, y, "GROVE"); y += 1
+    if not channels:
+        safe_addstr(win, y, 2, "grove: not connected", curses.color_pair(C_DIM))
+        return y + 1
+    _FIXED_ORDER = ["general", "architecture", "handoffs", "readme"]
+    ordered = sorted(channels, key=lambda c: (
+        _FIXED_ORDER.index(c["name"]) if c["name"] in _FIXED_ORDER else len(_FIXED_ORDER),
+        c["name"],
+    ))
+    for ch in ordered:
+        name   = ch["name"]
+        unread = ch.get("unread", 0)
+        if unread > 0:
+            glyph, glyph_col = "•", C_AMBER
+            suffix = f" {unread}"
+        else:
+            glyph, glyph_col = "·", C_DIM
+            suffix = ""
+        safe_addstr(win, y, 2, f"#{name}", curses.color_pair(C_BLUE))
+        x_g = 2 + 1 + len(name) + 2
+        if x_g < w - 4:
+            safe_addstr(win, y, x_g, glyph + suffix, curses.color_pair(glyph_col))
+        y += 1
+    return y
 
 
 def draw_overview_right(win):
