@@ -722,6 +722,26 @@ def fetch_postgres():
     except Exception as ex:
         DATA.push_log(f"pg error: {ex}")
 
+
+def fetch_grove():
+    """Fetch Grove agents, channels, and routing decisions into DATA."""
+    try:
+        import grove_reader
+        cursor_recs = soil.all_records("willow/dashboard/channel_cursors")
+        last_seen_ids = {r["channel"]: r["last_seen_id"]
+                         for r in cursor_recs if "channel" in r and "last_seen_id" in r}
+        agents   = grove_reader.grove_agents()
+        channels = grove_reader.grove_channels(last_seen_ids=last_seen_ids)
+        routing  = grove_reader.routing_decisions()
+        with DATA.lock:
+            DATA.grove_agents      = agents
+            DATA.grove_channels    = channels
+            DATA.routing_decisions = routing
+        DATA.push_log(f"grove: {len(agents)} agents · {len(channels)} channels")
+    except Exception as ex:
+        DATA.push_log(f"grove fetch error: {ex}")
+
+
 def fetch_ollama():
     try:
         with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
@@ -1019,6 +1039,7 @@ def refresh_all():
     DATA.push_log("── refreshing ──")
     fetch_sysinfo()
     fetch_postgres()
+    fetch_grove()
     fetch_ollama()
     fetch_manifests()
     fetch_secrets()
