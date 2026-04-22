@@ -53,9 +53,11 @@ def test_grove_channels_with_unread():
     conn = _mock_conn([channel_rows, unread_general, unread_arch])
     result = grove_reader.grove_channels(conn=conn, last_seen_ids={"architecture": 49})
     assert len(result) == 2
-    names = {r["name"] for r in result}
-    assert "general" in names
-    assert "architecture" in names
+    by_name = {r["name"]: r for r in result}
+    assert "general" in by_name
+    assert "architecture" in by_name
+    assert by_name["general"]["unread"] == 0
+    assert by_name["architecture"]["unread"] == 3
 
 
 def test_grove_channels_empty():
