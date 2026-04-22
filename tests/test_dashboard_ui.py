@@ -116,3 +116,19 @@ def test_draw_routing_region_shows_decision():
     with patch("curses.color_pair", return_value=0), patch("curses.A_DIM", 0):
         y = dashboard._draw_routing_region(win, 0, 40, decisions)
     assert y >= 2  # header + 1 row
+
+
+def test_nuke_placard_renders_without_crash():
+    import dashboard
+    stdscr = MagicMock()
+    stdscr.getmaxyx.return_value = (30, 80)
+    with patch("curses.color_pair", return_value=0), patch("curses.doupdate"):
+        dashboard.draw_nuke_placard(stdscr, "")
+
+
+def test_nuke_placard_with_partial_input():
+    import dashboard
+    stdscr = MagicMock()
+    stdscr.getmaxyx.return_value = (30, 80)
+    with patch("curses.color_pair", return_value=0), patch("curses.doupdate"):
+        dashboard.draw_nuke_placard(stdscr, "I UND")
