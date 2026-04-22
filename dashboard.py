@@ -1584,6 +1584,20 @@ def draw_overview_right(win):
     safe_addstr(win, y, 5 + bar_w + 4, f"  TMP {tmp}°C", curses.color_pair(tmp_col))
     y += 1
 
+    # ── Regions 2-4: AGENTS / ROUTING / GROVE ────────────────────────────────
+    with DATA.lock:
+        gr_agents   = list(DATA.grove_agents)
+        gr_channels = list(DATA.grove_channels)
+        gr_routing  = list(DATA.routing_decisions)
+
+    remaining = h - y - 4  # reserve 4 rows for card section
+    if remaining >= 3:
+        y = _draw_agents_region(win, y, w, gr_agents)
+    if remaining >= 6:
+        y = _draw_routing_region(win, y, w, gr_routing)
+    if remaining >= 3:
+        y = _draw_grove_region(win, y, w, gr_channels)
+
     # ── Card grid fills remaining space ───────────────────────────────────────
     cards_y = y
     cards_h = h - cards_y
