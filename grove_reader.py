@@ -1,6 +1,7 @@
 """grove_reader.py — Direct Postgres reader for Grove and routing data.
 b17: WDASH  ΔΣ=42
 """
+import hashlib
 import os
 from datetime import datetime, timezone
 
@@ -10,7 +11,7 @@ _HASH_PAIRS = [11, 12, 13, 14, 15, 16, 17]
 
 def color_for_sender(name: str) -> int:
     """Return a stable curses color_pair number for this sender name."""
-    return _HASH_PAIRS[hash(name) % len(_HASH_PAIRS)]
+    return _HASH_PAIRS[int(hashlib.md5(name.encode()).hexdigest(), 16) % len(_HASH_PAIRS)]
 
 
 def _pg_conn():
