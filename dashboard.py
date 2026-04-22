@@ -655,6 +655,10 @@ class SystemData:
         self.sys_disk = 0   # 0-100 %
         self.sys_tmp  = 0   # degrees C
         self._prev_cpu_stat: tuple[int, int] | None = None  # (total, idle)
+        # Grove / orchestration — populated by fetch_grove()
+        self.grove_agents:       list[dict] = []
+        self.grove_channels:     list[dict] = []
+        self.routing_decisions:  list[dict] = []
 
     def push_log(self, msg):
         with self.lock:
