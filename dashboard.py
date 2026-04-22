@@ -162,6 +162,8 @@ class NavState:
         self.search      = ""
         self.searching   = False
         self.quit_confirm = False   # waiting for second q to confirm exit
+        self.nuke_mode  = False   # True when nuke placard is active
+        self.nuke_input = ""      # characters typed toward "I UNDERSTAND"
     def tab(self):
         self.focus = {"right": None, "left": "right", None: "left"}[self.focus]
         self.expanded = False
@@ -2027,6 +2029,65 @@ PAGE_DRAWS = {
     PAGE_HELP:      (draw_help_left,       draw_help_right),
 }
 
+_NUKE_PLACARD = [
+    "",
+    "╔" + "═" * 71 + "╗",
+    "║" + " " * 71 + "║",
+    "║                        ▲  IRREVERSIBLE ACTION  ▲                       ║",
+    "║" + " " * 71 + "║",
+    "╠" + "═" * 71 + "╣",
+    "║" + " " * 71 + "║",
+    "║  WHAT WILL BE DESTROYED" + " " * 46 + "║",
+    "║  ───────────────────────" + " " * 46 + "║",
+    "║    • All atoms in ~/.willow/store/" + " " * 36 + "║",
+    "║    • All sessions in willow.sap_sessions" + " " * 29 + "║",
+    "║    • All LOAM atoms in willow_19" + " " * 37 + "║",
+    "║    • FRANK's ledger chain from genesis" + " " * 32 + "║",
+    "║    • Grove messages in this database" + " " * 33 + "║",
+    "║" + " " * 71 + "║",
+    "║  WHAT WILL BE PRESERVED" + " " * 46 + "║",
+    "║  ──────────────────────" + " " * 47 + "║",
+    "║    • Your SSH keys" + " " * 51 + "║",
+    "║    • Your GPG keys" + " " * 51 + "║",
+    "║    • Your Postgres cluster (only the willow_19 database is dropped)   ║",
+    "║    • Files outside ~/.willow/" + " " * 40 + "║",
+    "║" + " " * 71 + "║",
+    "║  There is no undo. There is no recovery. There is no backup this      ║",
+    "║  script is quietly keeping for you." + " " * 34 + "║",
+    "║" + " " * 71 + "║",
+    "║  To proceed, type:   I UNDERSTAND" + " " * 36 + "║",
+    "║  To abort, press:    Esc" + " " * 45 + "║",
+    "║" + " " * 71 + "║",
+    "",   # input line — rendered dynamically
+    "║" + " " * 71 + "║",
+    "╚" + "═" * 71 + "╝",
+    "",
+]
+
+
+def draw_nuke_placard(stdscr, input_so_far: str) -> None:
+    """Full-screen nuke confirmation placard. Takes the whole screen."""
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    lines = list(_NUKE_PLACARD)
+    # Build input line: fixed width, cursor at end
+    typed = input_so_far[:40]
+    input_line = f"║  > {typed}_" + " " * max(0, 64 - len(typed)) + "║"
+    lines[-4] = input_line   # replace the empty placeholder
+    start_y = max(0, (h - len(lines)) // 2)
+    for i, line in enumerate(lines):
+        y = start_y + i
+        if y >= h:
+            break
+        x = max(0, (w - 73) // 2)
+        try:
+            stdscr.addstr(y, x, line[:w - x], curses.color_pair(C_RED))
+        except curses.error:
+            pass
+    stdscr.noutrefresh()
+    curses.doupdate()
+
+
 def main(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
@@ -2056,6 +2117,22 @@ def main(stdscr):
     try:
         while True:
             key = stdscr.getch()
+
+            # ── Nuke placard mode ─────────────────────────────────────────
+            if NAV.nuke_mode:
+                if key == 27:                        # Esc — abort
+                    NAV.nuke_mode  = False
+                    NAV.nuke_input = ""
+                elif key in (curses.KEY_BACKSPACE, 127):
+                    NAV.nuke_input = NAV.nuke_input[:-1]
+                elif 32 <= key <= 126:
+                    NAV.nuke_input += chr(key)
+                    if NAV.nuke_input == "I UNDERSTAND":
+                        DATA.push_log("nuke: confirmed — not implemented yet")
+                        NAV.nuke_mode  = False
+                        NAV.nuke_input = ""
+                draw_nuke_placard(stdscr, NAV.nuke_input)
+                continue
 
             # ── Chat input mode (overview left panel) ──
             if NAV.focus == "left" and NAV.page == PAGE_OVERVIEW and not NAV.searching:
@@ -2139,6 +2216,10 @@ def main(stdscr):
                     threading.Thread(target=refresh_all, daemon=True).start()
                     threading.Thread(target=_load_cards, daemon=True).start()
                     DATA.push_log("manual refresh")
+                elif key == ord('n') and not NAV.nuke_mode:
+                    NAV.nuke_mode  = True
+                    NAV.nuke_input = ""
+                    continue
                 elif key == ord('/'):
                     NAV.searching = True; NAV.search = ""
                 elif key == 9:                        # Tab — cycle focus
