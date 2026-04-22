@@ -147,3 +147,11 @@ def _apply_colors(skin: Skin) -> None:
     curses.init_pair(C_BORDER,  skin.color_border, -1)
     brown = 130 if curses.COLORS >= 256 else curses.COLOR_YELLOW
     curses.init_pair(C_BROWN, brown, -1)
+    # Sender/agent hash palette (pairs 11-17)
+    curses.init_pair(11, curses.COLOR_CYAN,    -1)
+    curses.init_pair(12, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(13, curses.COLOR_YELLOW,  -1)
+    curses.init_pair(14, curses.COLOR_GREEN,   -1)
+    curses.init_pair(15, curses.COLOR_BLUE,    -1)
+    curses.init_pair(16, curses.COLOR_RED,     -1)
+    curses.init_pair(17, curses.COLOR_CYAN,    -1)
