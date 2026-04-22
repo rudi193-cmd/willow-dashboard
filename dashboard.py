@@ -1305,7 +1305,7 @@ def draw_page_bar(stdscr):
                                curses.color_pair(C_AMBER) | curses.A_BOLD | curses.A_REVERSE)
             except curses.error: pass
     else:
-        hint = " Tab=focus ←→=page Enter=expand Esc=back qq=quit "
+        hint = " Tab=focus ←→=page Enter=expand Esc=back n=nuke qq=quit "
         hx = w - len(hint) - 1
         if hx > x:
             try: stdscr.addstr(y, hx, hint, curses.color_pair(C_DIM))
@@ -2345,7 +2345,7 @@ def main(stdscr):
             h, w = stdscr.getmaxyx()
             if h < 12 or w < 40:
                 stdscr.erase()
-                try: stdscr.addstr(0, 0, "Terminal too small")
+                try: stdscr.addstr(0, 0, "terminal too small — resize to 80×24 or larger")
                 except curses.error: pass
                 stdscr.noutrefresh(); curses.doupdate()
                 continue
