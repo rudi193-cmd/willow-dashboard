@@ -2382,6 +2382,62 @@ def main(stdscr):
     finally:
         stop_evt.set()
 
+def _first_run_preset_picker() -> None:
+    """
+    One-time layout preset picker. Shows on first run if no preset stored.
+    Stores choice to SOIL under willow-dashboard/config/layout_preset.
+    Graceful: if curses unavailable or user skips, defaults to 'default'.
+    """
+    existing = soil.get("willow-dashboard/config", "layout_preset")
+    if existing:
+        return  # already chosen
+
+    PRESETS = [
+        ("default", "Default",  "Status + agents + Grove + cards grid"),
+        ("discord", "Discord",  "Channel-first (needs ≥120 columns)"),
+        ("claude",  "Claude",   "Command-dominant, compact sidebar"),
+    ]
+
+    def _picker(stdscr):
+        curses.curs_set(0)
+        h, w = stdscr.getmaxyx()
+        idx = 0
+        while True:
+            stdscr.clear()
+            stdscr.addstr(1, 2, "Willow Grove — Choose a layout preset", curses.A_BOLD)
+            stdscr.addstr(2, 2, "You can change this later in Settings (s key).")
+            for i, (pid, label, desc) in enumerate(PRESETS):
+                y = 4 + i * 2
+                marker = "▶ " if i == idx else "  "
+                attr = curses.A_REVERSE if i == idx else curses.A_NORMAL
+                stdscr.addstr(y, 2, f"{marker}{label}", attr)
+                stdscr.addstr(y, 20, desc, curses.A_DIM)
+            stdscr.addstr(4 + len(PRESETS) * 2 + 1, 2, "↑/↓ navigate   Enter select   q skip")
+            stdscr.refresh()
+            key = stdscr.getch()
+            if key in (curses.KEY_UP, ord('k')) and idx > 0:
+                idx -= 1
+            elif key in (curses.KEY_DOWN, ord('j')) and idx < len(PRESETS) - 1:
+                idx += 1
+            elif key in (ord('\n'), ord('\r'), curses.KEY_ENTER):
+                chosen = PRESETS[idx][0]
+                soil.put("willow-dashboard/config", "layout_preset", {"value": chosen})
+                # Also apply to active skin
+                skin = skins.load()
+                skin.layout_preset = chosen
+                soil.put("willow-dashboard/skins", skin.id, skin.to_dict())
+                skins.set_active(skin.id)
+                break
+            elif key == ord('q'):
+                soil.put("willow-dashboard/config", "layout_preset", {"value": "default"})
+                break
+
+    try:
+        curses.wrapper(_picker)
+    except Exception:
+        soil.put("willow-dashboard/config", "layout_preset", {"value": "default"})
+
+
 if __name__ == "__main__":
     import boot as _boot
     if "--skip-boot" not in sys.argv:
@@ -2392,4 +2448,5 @@ if __name__ == "__main__":
             sys.exit(0)
         if boot_cfg.get("agent_name"):
             os.environ.setdefault("WILLOW_AGENT_NAME", boot_cfg["agent_name"])
+    _first_run_preset_picker()
     curses.wrapper(main)
