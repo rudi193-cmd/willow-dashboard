@@ -1,4 +1,4 @@
-"""boot.py — Pre-dashboard boot sequence for Willow Dashboard.
+"""canopy.py — Pre-dashboard boot sequence for Willow Dashboard.
 b17: WDASH  ΔΣ=42
 
 Handles on every launch:
@@ -208,7 +208,7 @@ def check_environment() -> dict:
 
     # SAFE
     safe_root = os.environ.get("WILLOW_SAFE_ROOT",
-                str(Path.home() / "SAFE_backup" / "Applications"))
+                str(Path.home() / "SAFE" / "Applications"))
     if Path(safe_root).is_dir():
         apps = [d for d in Path(safe_root).iterdir() if d.is_dir()]
         results["SAFE"] = ("ok", f"{len(apps)} manifests at {safe_root}")
@@ -818,8 +818,8 @@ def page_pgp_auth(win, fingerprint: str, agent_name: str) -> bool:
 def _vault_init() -> bool:
     try:
         from cryptography.fernet import Fernet
-        key_path   = Path.home() / ".willow_master.key"
-        vault_path = Path.home() / ".willow_creds.db"
+        key_path   = Path.home() / ".willow" / ".master.key"
+        vault_path = Path.home() / ".willow" / "vault.db"
         if not key_path.exists():
             key = Fernet.generate_key()
             key_path.write_bytes(key)
@@ -837,8 +837,8 @@ def _vault_init() -> bool:
 def _vault_write(name: str, env_key: str, value: str) -> bool:
     try:
         from cryptography.fernet import Fernet
-        key_path   = Path.home() / ".willow_master.key"
-        vault_path = Path.home() / ".willow_creds.db"
+        key_path   = Path.home() / ".willow" / ".master.key"
+        vault_path = Path.home() / ".willow" / "vault.db"
         f   = Fernet(key_path.read_bytes().strip())
         enc = f.encrypt(value.encode())
         conn = sqlite3.connect(str(vault_path))
@@ -856,8 +856,8 @@ def _vault_write(name: str, env_key: str, value: str) -> bool:
 def _vault_has_key(name: str) -> bool:
     try:
         from cryptography.fernet import Fernet
-        key_path   = Path.home() / ".willow_master.key"
-        vault_path = Path.home() / ".willow_creds.db"
+        key_path   = Path.home() / ".willow" / ".master.key"
+        vault_path = Path.home() / ".willow" / "vault.db"
         if not vault_path.exists() or not key_path.exists():
             return False
         f    = Fernet(key_path.read_bytes().strip())
@@ -1038,7 +1038,7 @@ _FRANK_STEPS = [
         ],
         "install": [
             ("cryptography",       "Python encryption library"),
-            ("~/.willow_creds.db", "your encrypted credential store"),
+            ("~/.willow/vault.db", "your encrypted credential store"),
         ],
         "post_beat": "Andvari curse assessment: NEGATIVE. Certification on file. Loki: [no response]. Expected.",
         "vault_action": "init",

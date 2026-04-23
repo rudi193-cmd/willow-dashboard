@@ -49,7 +49,7 @@ export WILLOW_AGENT_NAME="${WILLOW_AGENT_NAME:-heimdallr}"
 # Postgres — Unix socket only (no TCP vars)
 unset WILLOW_PG_HOST WILLOW_PG_PORT WILLOW_PG_PASS 2>/dev/null || true
 
-# SAP fingerprint — boot.py will populate this if set in boot config
+# SAP fingerprint — canopy.py will populate this if set in boot config
 if [[ -f "${HOME}/.willow/willow-dashboard-boot.json" ]]; then
     _fp="$(python3 -c "
 import json,sys

@@ -389,8 +389,8 @@ def _get_vault_key(name):
     """Read a named credential — checks Fernet vault then credentials.json fallback."""
     # Fernet vault
     try:
-        vault    = Path.home() / ".willow_creds.db"
-        key_path = Path.home() / ".willow_master.key"
+        vault    = Path.home() / ".willow" / "vault.db"
+        key_path = Path.home() / ".willow" / ".master.key"
         if vault.exists() and key_path.exists():
             from cryptography.fernet import Fernet
             f    = Fernet(key_path.read_bytes().strip())
@@ -796,7 +796,7 @@ def fetch_ollama():
 def fetch_manifests():
     try:
         safe_root = os.environ.get("WILLOW_SAFE_ROOT",
-                    str(Path.home() / "SAFE_backup" / "Applications"))
+                    str(Path.home() / "SAFE" / "Applications"))
         items, passed, total = [], 0, 0
         if os.path.isdir(safe_root):
             for app in sorted(os.listdir(safe_root)):
@@ -817,7 +817,7 @@ def fetch_manifests():
 
 def fetch_secrets():
     try:
-        vault_path = Path.home() / ".willow_creds.db"
+        vault_path = Path.home() / ".willow" / "vault.db"
         if not vault_path.exists():
             card_mod.cache_put("secrets", "no vault", "", "amber")
             return
