@@ -50,6 +50,10 @@ class Skin:
     stat_strip:     bool = True
     # Accessibility flag — adds symbol prefix to card values
     accessible: bool = False
+    # Layout preset — "default" | "discord" | "claude"
+    # discord: channel-first, requires >=120 cols, graceful fallback to default
+    # claude:  command-dominant, compact status/grove/cards on right
+    layout_preset: str = "default"
     # Extension stub
     custom: Optional[dict] = None
 

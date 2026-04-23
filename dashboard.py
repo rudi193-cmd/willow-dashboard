@@ -349,11 +349,21 @@ def _write_session_atom(card) -> None:
 
 
 def _load_session_atom(card_id: str) -> dict:
-    """Retrieve the last saved session atom for a card."""
+    """Retrieve the last saved session atom for a card. SOIL first, KB fallback."""
     try:
-        return soil.get("willow-dashboard/sessions", card_id) or {}
+        result = soil.get("willow-dashboard/sessions", card_id)
+        if result:
+            return result
     except Exception:
-        return {}
+        pass
+    # KB fallback — search knowledge/atoms SOIL collection
+    try:
+        hits = soil.search("knowledge/atoms", card_id)
+        if hits:
+            return {"summary": hits[0].get("summary", ""), "source": "kb"}
+    except Exception:
+        pass
+    return {}
 
 
 # ── Switch-context detection ─────────────────────────────────────────────────
