@@ -1,6 +1,6 @@
 # Orchestration Terminal Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add AGENTS, ROUTING, and GROVE always-visible regions to the overview right panel, plus a nuke placard triggered by `n`.
 
@@ -34,7 +34,7 @@
 - Create: `grove_reader.py`
 - Test: `tests/test_grove_reader.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_grove_reader.py
@@ -136,14 +136,14 @@ def test_color_for_sender_different():
     assert len(colors) > 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 ```bash
 python3 -m pytest tests/test_grove_reader.py -v 2>&1 | head -20
 ```
 Expected: `ModuleNotFoundError: No module named 'grove_reader'`
 
-- [ ] **Step 3: Create grove_reader.py**
+- [x] **Step 3: Create grove_reader.py**
 
 ```python
 """grove_reader.py — Direct Postgres reader for Grove and routing data.
@@ -330,14 +330,14 @@ def routing_decisions(conn=None, limit: int = 8) -> list[dict]:
                 pass
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 python3 -m pytest tests/test_grove_reader.py -v
 ```
 Expected: `7 passed`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add grove_reader.py tests/test_grove_reader.py
@@ -351,7 +351,7 @@ git commit -m "feat: grove_reader.py — Postgres reader for agents, channels, r
 **Files:**
 - Modify: `dashboard.py:630-665` (`SystemData.__init__`)
 
-- [ ] **Step 1: Add three fields to SystemData**
+- [x] **Step 1: Add three fields to SystemData**
 
 In `dashboard.py`, find the `class SystemData:` block (around line 630). After `self._prev_cpu_stat`, add:
 
@@ -362,14 +362,14 @@ In `dashboard.py`, find the `class SystemData:` block (around line 630). After `
         self.routing_decisions: list[dict] = []  # from grove_reader.routing_decisions()
 ```
 
-- [ ] **Step 2: Run existing tests to verify nothing broke**
+- [x] **Step 2: Run existing tests to verify nothing broke**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: `61 passed` (all existing tests still pass)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add dashboard.py
@@ -383,7 +383,7 @@ git commit -m "feat: add grove_agents, grove_channels, routing_decisions to Syst
 **Files:**
 - Modify: `dashboard.py` — add `fetch_grove()` function and call it from `background_refresh`
 
-- [ ] **Step 1: Add fetch_grove() after fetch_postgres()**
+- [x] **Step 1: Add fetch_grove() after fetch_postgres()**
 
 Find `fetch_postgres()` in `dashboard.py` (around line 686). After its closing `except` block, add this new function:
 
@@ -410,7 +410,7 @@ def fetch_grove():
         DATA.push_log(f"grove fetch error: {ex}")
 ```
 
-- [ ] **Step 2: Call fetch_grove from background_refresh**
+- [x] **Step 2: Call fetch_grove from background_refresh**
 
 Find `background_refresh` (search for `def background_refresh` — it's around line 1020). Add `fetch_grove()` to its loop alongside the other fetch calls:
 
@@ -420,14 +420,14 @@ Find `background_refresh` (search for `def background_refresh` — it's around l
 
 Add it right after the `fetch_postgres()` call inside the loop.
 
-- [ ] **Step 3: Run existing tests**
+- [x] **Step 3: Run existing tests**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: `61 passed`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add dashboard.py
@@ -442,7 +442,7 @@ git commit -m "feat: fetch_grove() populates DATA.grove_agents/channels/routing_
 - Modify: `dashboard.py:31-42` (color pair constants)
 - Modify: `dashboard.py` main() color init section
 
-- [ ] **Step 1: Add C_HASH constants after existing color pair constants**
+- [x] **Step 1: Add C_HASH constants after existing color pair constants**
 
 Find the `# ── Color pairs ──` block (around line 31). After `C_SELECT = 9`, add:
 
@@ -457,7 +457,7 @@ C_HASH_6 = 16  # red    (bright via A_BOLD)
 C_HASH_7 = 17  # cyan   (bright via A_BOLD)
 ```
 
-- [ ] **Step 2: Initialize hash pairs in skins.init**
+- [x] **Step 2: Initialize hash pairs in skins.init**
 
 In `skins.py`, find the `init()` function. After the existing `curses.init_pair` calls, add:
 
@@ -472,14 +472,14 @@ In `skins.py`, find the `init()` function. After the existing `curses.init_pair`
     curses.init_pair(17, curses.COLOR_CYAN,    -1)
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: `61 passed`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add dashboard.py skins.py
@@ -493,7 +493,7 @@ git commit -m "feat: add C_HASH_1..7 color pairs for sender hash coloring"
 **Files:**
 - Modify: `dashboard.py` — add three region functions before `draw_overview_right`
 
-- [ ] **Step 1: Write tests for the renderers**
+- [x] **Step 1: Write tests for the renderers**
 
 Add to `tests/test_dashboard_ui.py`:
 
@@ -573,14 +573,14 @@ def test_draw_routing_region_shows_decision():
     assert y >= 2  # header + 1 row
 ```
 
-- [ ] **Step 2: Run tests to confirm they fail (ImportError on missing functions)**
+- [x] **Step 2: Run tests to confirm they fail (ImportError on missing functions)**
 
 ```bash
 python3 -m pytest tests/test_dashboard_ui.py -v 2>&1 | tail -15
 ```
 Expected: failures with `AttributeError: module 'dashboard' has no attribute '_draw_agents_region'`
 
-- [ ] **Step 3: Add _fmt_age helper**
+- [x] **Step 3: Add _fmt_age helper**
 
 In `dashboard.py`, after the `_fmt()` helper (around line 668), add:
 
@@ -594,7 +594,7 @@ def _fmt_age(secs: int) -> str:
     return f"{secs // 3600}h"
 ```
 
-- [ ] **Step 4: Add three region renderer functions**
+- [x] **Step 4: Add three region renderer functions**
 
 In `dashboard.py`, find the line `def draw_overview_right(win):` (around line 1396). Insert these three functions **immediately before** it:
 
@@ -676,14 +676,14 @@ def _draw_grove_region(win, y: int, w: int, channels: list) -> int:
     return y
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 python3 -m pytest tests/test_dashboard_ui.py -v
 ```
 Expected: all new tests pass (existing tests remain passing)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add dashboard.py tests/test_dashboard_ui.py
@@ -697,7 +697,7 @@ git commit -m "feat: _draw_agents_region, _draw_routing_region, _draw_grove_regi
 **Files:**
 - Modify: `dashboard.py:1396-1483` (`draw_overview_right`)
 
-- [ ] **Step 1: Replace the body of draw_overview_right**
+- [x] **Step 1: Replace the body of draw_overview_right**
 
 Find `draw_overview_right(win)` in `dashboard.py` (line 1396). The section between the expanded-card early return (line 1428) and `draw_panel_border` (line 1482) is what we're extending.
 
@@ -770,14 +770,14 @@ Replace the section from `# ── Compact STATUS strip` through `# ── Card 
                 pass
 ```
 
-- [ ] **Step 2: Run all tests**
+- [x] **Step 2: Run all tests**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: `61 passed` + new tests (≥67 total)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add dashboard.py
@@ -791,7 +791,7 @@ git commit -m "feat: wire AGENTS/ROUTING/GROVE regions into draw_overview_right"
 **Files:**
 - Modify: `dashboard.py` — add nuke placard + state to NAV + key handler
 
-- [ ] **Step 1: Write nuke placard tests**
+- [x] **Step 1: Write nuke placard tests**
 
 Add to `tests/test_dashboard_ui.py`:
 
@@ -811,14 +811,14 @@ def test_nuke_placard_with_partial_input():
     dashboard.draw_nuke_placard(stdscr, "I UND")
 ```
 
-- [ ] **Step 2: Run to confirm they fail**
+- [x] **Step 2: Run to confirm they fail**
 
 ```bash
 python3 -m pytest tests/test_dashboard_ui.py::test_nuke_placard_renders_without_crash -v
 ```
 Expected: `AttributeError: module 'dashboard' has no attribute 'draw_nuke_placard'`
 
-- [ ] **Step 3: Add nuke_mode fields to NavState**
+- [x] **Step 3: Add nuke_mode fields to NavState**
 
 Find `class NavState:` in `dashboard.py`. Add two fields in `__init__`:
 
@@ -827,7 +827,7 @@ Find `class NavState:` in `dashboard.py`. Add two fields in `__init__`:
         self.nuke_input = ""      # characters typed toward "I UNDERSTAND"
 ```
 
-- [ ] **Step 4: Add draw_nuke_placard function**
+- [x] **Step 4: Add draw_nuke_placard function**
 
 Add this function just before `def main(stdscr):` (around line 1897):
 
@@ -890,7 +890,7 @@ def draw_nuke_placard(stdscr, input_so_far: str) -> None:
     curses.doupdate()
 ```
 
-- [ ] **Step 5: Add n key handler to the main loop**
+- [x] **Step 5: Add n key handler to the main loop**
 
 In `dashboard.py`, find the main event loop (around line 1924). Find the section handling the `q` quit key (search for `NAV.quit_confirm`). Above that block, add nuke placard handling:
 
@@ -923,14 +923,14 @@ Also add the `n` key trigger in the global key section (near `ord('r')` for refr
                     continue
 ```
 
-- [ ] **Step 6: Run all tests**
+- [x] **Step 6: Run all tests**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: all tests pass (61 + new ≥ 69 total)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add dashboard.py tests/test_dashboard_ui.py
@@ -945,7 +945,7 @@ git commit -m "feat: nuke placard — n triggers full-screen confirmation, I UND
 - Modify: `dashboard.py:1264` (`draw_page_bar`)
 - Modify: `dashboard.py:2132` (terminal size check)
 
-- [ ] **Step 1: Update key strip hint**
+- [x] **Step 1: Update key strip hint**
 
 Find `draw_page_bar` (around line 1240). Update the hint string:
 
@@ -959,7 +959,7 @@ New:
         hint = " Tab=focus ←→=page Enter=expand Esc=back n=nuke qq=quit "
 ```
 
-- [ ] **Step 2: Update terminal size message**
+- [x] **Step 2: Update terminal size message**
 
 Find the terminal-too-small check (around line 2132):
 
@@ -973,14 +973,14 @@ New:
                 try: stdscr.addstr(0, 0, "terminal too small — resize to 80×24 or larger")
 ```
 
-- [ ] **Step 3: Run all tests**
+- [x] **Step 3: Run all tests**
 
 ```bash
 python3 -m pytest tests/ -q --tb=short
 ```
 Expected: all tests pass
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git add dashboard.py

@@ -1,6 +1,6 @@
 # UI Mission Control Redesign — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the dashboard look and feel like a live ops room — dense status column, vitals strip in the hero bar, command interface as the chat panel centerpiece.
 
@@ -27,7 +27,7 @@ No other files change.
 - Modify: `dashboard.py` — `SystemData.__init__` and new `fetch_sysinfo()` function, `refresh_all()`
 - Create: `tests/test_dashboard_ui.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_dashboard_ui.py`:
 
@@ -58,7 +58,7 @@ def test_fetch_sysinfo_populates_data():
     assert isinstance(dashboard.DATA.sys_tmp, int)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```
 cd /home/sean-campbell/github/willow-dashboard
@@ -67,7 +67,7 @@ python -m pytest tests/test_dashboard_ui.py -v
 
 Expected: `AttributeError: 'SystemData' object has no attribute 'sys_cpu'`
 
-- [ ] **Step 3: Add sysinfo fields to SystemData.__init__**
+- [x] **Step 3: Add sysinfo fields to SystemData.__init__**
 
 In `dashboard.py`, find `class SystemData:` (line ~630). Add these fields to `__init__` after `self.log`:
 
@@ -80,7 +80,7 @@ In `dashboard.py`, find `class SystemData:` (line ~630). Add these fields to `__
         self._prev_cpu_stat: tuple[int, int] | None = None  # (total, idle)
 ```
 
-- [ ] **Step 4: Add fetch_sysinfo() after fetch_agents() (line ~942)**
+- [x] **Step 4: Add fetch_sysinfo() after fetch_agents() (line ~942)**
 
 ```python
 def _read_proc_cpu() -> tuple[int, int]:
@@ -143,7 +143,7 @@ def fetch_sysinfo() -> None:
         pass
 ```
 
-- [ ] **Step 5: Wire into refresh_all()**
+- [x] **Step 5: Wire into refresh_all()**
 
 In `refresh_all()` (line ~944), add `fetch_sysinfo()` as the first call:
 
@@ -158,7 +158,7 @@ def refresh_all():
     ...
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 ```
 python -m pytest tests/test_dashboard_ui.py::test_sysinfo_fields_exist tests/test_dashboard_ui.py::test_fetch_sysinfo_populates_data -v
@@ -166,7 +166,7 @@ python -m pytest tests/test_dashboard_ui.py::test_sysinfo_fields_exist tests/tes
 
 Expected: both PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add dashboard.py tests/test_dashboard_ui.py
@@ -181,7 +181,7 @@ git commit -m "feat: add sysinfo fetch (CPU/MEM/DISK/TEMP) to SystemData"
 - Modify: `dashboard.py` — two new functions in the Drawing helpers block (line ~962)
 - Modify: `tests/test_dashboard_ui.py` — add bar tests
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Append to `tests/test_dashboard_ui.py`:
 
@@ -204,7 +204,7 @@ def test_ascii_bar_width():
     assert result.count("█") == 8  # round(75/100*10) = 8 (actually 7.5 rounds to 8)
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 ```
 python -m pytest tests/test_dashboard_ui.py::test_ascii_bar_empty -v
@@ -212,7 +212,7 @@ python -m pytest tests/test_dashboard_ui.py::test_ascii_bar_empty -v
 
 Expected: `AttributeError: module 'dashboard' has no attribute '_ascii_bar'`
 
-- [ ] **Step 3: Add _ascii_bar() to dashboard.py**
+- [x] **Step 3: Add _ascii_bar() to dashboard.py**
 
 In the Drawing helpers block (after `draw_hline`, around line ~975), add:
 
@@ -223,7 +223,7 @@ def _ascii_bar(pct: int, width: int = 8) -> str:
     return "█" * filled + "░" * (width - filled)
 ```
 
-- [ ] **Step 4: Add _section_header() after _ascii_bar()**
+- [x] **Step 4: Add _section_header() after _ascii_bar()**
 
 ```python
 def _section_header(win, y: int, label: str) -> None:
@@ -240,7 +240,7 @@ def _section_header(win, y: int, label: str) -> None:
         pass
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 ```
 python -m pytest tests/test_dashboard_ui.py -v
@@ -248,7 +248,7 @@ python -m pytest tests/test_dashboard_ui.py -v
 
 Expected: all PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add dashboard.py tests/test_dashboard_ui.py
@@ -262,7 +262,7 @@ git commit -m "feat: add _ascii_bar() and _section_header() drawing helpers"
 **Files:**
 - Modify: `dashboard.py` — new `_draw_hero_vitals()`, updated `draw_willow_hero()`
 
-- [ ] **Step 1: Add _draw_hero_vitals() after _section_header()**
+- [x] **Step 1: Add _draw_hero_vitals() after _section_header()**
 
 ```python
 def _draw_hero_vitals(win, y: int) -> None:
@@ -307,7 +307,7 @@ def _draw_hero_vitals(win, y: int) -> None:
         safe_addstr(win, y, x, tmp_str, curses.color_pair(tmp_col))
 ```
 
-- [ ] **Step 2: Update draw_willow_hero() to call _draw_hero_vitals()**
+- [x] **Step 2: Update draw_willow_hero() to call _draw_hero_vitals()**
 
 Find this line in `draw_willow_hero()` (line ~1065):
 
@@ -323,7 +323,7 @@ Replace with:
     return _TREE_H + 3
 ```
 
-- [ ] **Step 3: Smoke test**
+- [x] **Step 3: Smoke test**
 
 ```
 cd /home/sean-campbell/github/willow-dashboard
@@ -334,7 +334,7 @@ Expected: hero bar bottom row shows `CPU ░░░░░░ 0%  MEM ██░░
 
 Press `r` to force a refresh. CPU % should populate on the second refresh.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add dashboard.py
@@ -348,7 +348,7 @@ git commit -m "feat: replace hero hline with live vitals strip (CPU/MEM/DISK/TMP
 **Files:**
 - Modify: `dashboard.py` — `draw_overview_right()`
 
-- [ ] **Step 1: Replace draw_overview_right() with the STATUS column**
+- [x] **Step 1: Replace draw_overview_right() with the STATUS column**
 
 Find `def draw_overview_right(win):` (line ~1265). Replace the entire function with:
 
@@ -454,7 +454,7 @@ def draw_overview_right(win):
     win.noutrefresh()
 ```
 
-- [ ] **Step 2: Smoke test**
+- [x] **Step 2: Smoke test**
 
 ```
 python3 dashboard.py
@@ -464,7 +464,7 @@ Expected: Overview right panel shows STATUS section with Postgres/Kart/Ollama/SA
 
 Tab to focus right panel — amber border appears. No crashes.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add dashboard.py
@@ -478,7 +478,7 @@ git commit -m "feat: replace overview right panel with STATUS column (dot+metric
 **Files:**
 - Modify: `dashboard.py` — `draw_overview_left()`
 
-- [ ] **Step 1: Add _section_header after hero return**
+- [x] **Step 1: Add _section_header after hero return**
 
 Find `draw_overview_left()` (line ~1143). Find this block:
 
@@ -503,7 +503,7 @@ Replace with:
     input_row  = h - 3
 ```
 
-- [ ] **Step 2: Smoke test**
+- [x] **Step 2: Smoke test**
 
 ```
 python3 dashboard.py
@@ -511,7 +511,7 @@ python3 dashboard.py
 
 Expected: a `── COMMAND ──────────────` header line appears between the hero block and the first chat message. Chat history and input still work normally.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add dashboard.py
@@ -525,7 +525,7 @@ git commit -m "feat: add COMMAND section header to overview left panel"
 **Files:**
 - Modify: `dashboard.py` — `draw_page_bar()`
 
-- [ ] **Step 1: Tighten inactive tab attr**
+- [x] **Step 1: Tighten inactive tab attr**
 
 Find `draw_page_bar()` (line ~1112). Find this block:
 
@@ -547,7 +547,7 @@ Replace with:
             attr = curses.color_pair(C_DIM) | curses.A_DIM
 ```
 
-- [ ] **Step 2: Smoke test**
+- [x] **Step 2: Smoke test**
 
 ```
 python3 dashboard.py
@@ -555,7 +555,7 @@ python3 dashboard.py
 
 Expected: active page tab is bright amber/blue on reverse background. Inactive page tabs are visibly dimmer. Navigate with ←→ to confirm contrast is legible.
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 ```
 python -m pytest tests/ -v
@@ -563,7 +563,7 @@ python -m pytest tests/ -v
 
 Expected: all tests PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add dashboard.py

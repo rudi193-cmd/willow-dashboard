@@ -2112,6 +2112,13 @@ def main(stdscr):
     t = threading.Thread(target=background_refresh, args=(stop_evt,), daemon=True)
     t.start()
 
+    try:
+        import kart_worker as _kart
+        threading.Thread(target=_kart.kart_loop, daemon=True).start()
+        DATA.push_log("kart: worker started")
+    except Exception as _ke:
+        DATA.push_log(f"kart: worker failed to start — {_ke}")
+
     left_win = right_win = None
 
     def rebuild():
@@ -2138,7 +2145,22 @@ def main(stdscr):
                 elif 32 <= key <= 126:
                     NAV.nuke_input += chr(key)
                     if NAV.nuke_input == "I UNDERSTAND":
-                        DATA.push_log("nuke: confirmed — not implemented yet")
+                        try:
+                            _willow_19 = Path(__file__).resolve().parent.parent / "willow-1.9"
+                            if str(_willow_19) not in sys.path:
+                                sys.path.insert(0, str(_willow_19))
+                            from willow.nuke import execute as _nuke_execute
+                            _r = _nuke_execute(dry_run=False)
+                            DATA.push_log(
+                                f"nuke: complete — {_r.store_files_deleted} store files, "
+                                f"{len(_r.pg_tables_truncated)} tables, "
+                                f"receipt: {Path(_r.receipt_path).name if _r.receipt_path else 'none'}"
+                            )
+                            if _r.errors:
+                                for _e in _r.errors:
+                                    DATA.push_log(f"nuke error: {_e}")
+                        except Exception as _nuke_err:
+                            DATA.push_log(f"nuke: failed — {_nuke_err}")
                         NAV.nuke_mode  = False
                         NAV.nuke_input = ""
                 draw_nuke_placard(stdscr, NAV.nuke_input)
