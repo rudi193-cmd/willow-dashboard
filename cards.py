@@ -57,17 +57,17 @@ CARD_SEEDS: list[CardDef] = [
     CardDef(
         id="kart", label="Kart Queue", category="system", built_in=True,
         order=0, enabled=True,
-        pg_table="public.kart_task_queue",
-        value_query="SELECT COUNT(*) FROM public.kart_task_queue WHERE status='pending'",
-        sub_query="SELECT COUNT(*) FROM public.kart_task_queue WHERE status='running'",
+        pg_table="public.tasks",
+        value_query="SELECT COUNT(*) FROM public.tasks WHERE status='pending'",
+        sub_query="SELECT COUNT(*) FROM public.tasks WHERE status='running'",
         sub_format="{} running",
         state_query=(
             "SELECT CASE WHEN COUNT(*)>10 THEN 'amber' "
             "WHEN COUNT(*)>0 THEN 'green' ELSE 'dim' END "
-            "FROM public.kart_task_queue WHERE status='pending'"
+            "FROM public.tasks WHERE status='pending'"
         ),
-        expand_query="SELECT task_id,task,status,created_at FROM public.kart_task_queue ORDER BY created_at DESC LIMIT 50",
-        expand_columns=["task_id", "task", "status", "created_at"],
+        expand_query="SELECT id,task,status,created_at FROM public.tasks ORDER BY created_at DESC LIMIT 50",
+        expand_columns=["id", "task", "status", "created_at"],
         actions=[
             {"key": "c", "label": "cancel task", "type": "confirm"},
             {"key": "r", "label": "retry task",  "type": "confirm"},
