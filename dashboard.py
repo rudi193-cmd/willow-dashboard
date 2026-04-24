@@ -1897,8 +1897,41 @@ def draw_settings_right(win):
         safe_addstr(win, y + 1, 4, val[:w-6],  curses.color_pair(C_BLUE))
         safe_addstr(win, y + 2, 4, desc[:w-6], curses.color_pair(C_DIM) | curses.A_DIM)
 
+    # Model adapter
+    model_y = 2 + len(_SETTINGS) * 3 + 1
+    if model_y < h - 2:
+        safe_addstr(win, model_y, 1, "── Model Provider ──", curses.color_pair(C_AMBER))
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).parent.parent / "willow-1.9"))
+            from core.willow_store import WillowStore as _WS
+            _setting = _WS().get("willow/settings", "model") or {}
+            _provider = (_setting.get("data") or _setting).get("provider", "not configured")
+            try:
+                from core.model_adapter import get_adapter as _ga
+                from core.vault import Vault as _V
+                _vault_key = {"anthropic": "ANTHROPIC_API_KEY", "groq": "GROQ_API_KEY",
+                              "xai": "XAI_API_KEY"}.get(_provider)
+                _kwargs = {}
+                if _vault_key:
+                    _k = _V().read(_vault_key)
+                    if _k:
+                        _kwargs["api_key"] = _k
+                _healthy = _ga(_provider, **_kwargs).health()
+                _health_str = "healthy" if _healthy else "unreachable"
+                _hattr = curses.color_pair(C_GREEN) if _healthy else curses.color_pair(C_RED)
+            except Exception:
+                _health_str = "unknown"
+                _hattr = curses.color_pair(C_DIM)
+            safe_addstr(win, model_y + 1, 3, f"Provider: {_provider}", curses.color_pair(C_BLUE))
+            safe_addstr(win, model_y + 1, 3 + 12 + len(_provider), f"  {_health_str}", _hattr)
+            safe_addstr(win, model_y + 2, 3, "Change: run ./willow-dashboard.sh --setup",
+                        curses.color_pair(C_DIM) | curses.A_DIM)
+        except Exception:
+            safe_addstr(win, model_y + 1, 3, "Provider: not configured", curses.color_pair(C_DIM))
+
     # Skin picker
-    skin_y = 2 + len(_SETTINGS) * 3 + 1
+    skin_y = model_y + 4
     if skin_y < h - 2:
         safe_addstr(win, skin_y, 1, "── Skin ──", curses.color_pair(C_AMBER))
         for i, skin in enumerate(skins.SKIN_SEEDS):

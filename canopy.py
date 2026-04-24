@@ -634,6 +634,124 @@ def page_path_select(win) -> str:
                 return path
 
 
+_PROVIDERS = [
+    ("groq",             "Groq API        (recommended — fast, generous free tier)"),
+    ("anthropic",        "Anthropic API   (Claude — best quality)"),
+    ("ollama",           "Ollama          (local model — requires GPU)"),
+    ("xai",              "xAI API         (Grok)"),
+    ("openai_compatible","Other           (any OpenAI-compatible endpoint)"),
+]
+_PROVIDER_ENV_KEYS = {
+    "groq":             "GROQ_API_KEY",
+    "anthropic":        "ANTHROPIC_API_KEY",
+    "xai":              "XAI_API_KEY",
+    "openai_compatible":"OPENAI_COMPAT_API_KEY",
+}
+_PROVIDER_HINTS = {
+    "groq":             "gsk_...",
+    "anthropic":        "sk-ant-...",
+    "xai":              "xai-...",
+    "openai_compatible":"(your endpoint API key)",
+}
+
+
+def _save_model_provider(provider: str, api_key: str) -> None:
+    """Store model provider selection and API key."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent / "willow-1.9"))
+        if api_key:
+            from core.vault import Vault
+            vault_key = _PROVIDER_ENV_KEYS.get(provider, "API_KEY")
+            v = Vault()
+            vault_db = Path.home() / ".willow" / "vault.db"
+            if not vault_db.exists():
+                v.init()
+            v.write(vault_key, api_key)
+        from core.willow_store import WillowStore
+        store = WillowStore()
+        store.put("willow/settings", "model", {"provider": provider, "model": None})
+    except Exception as e:
+        _blog(f"model provider save failed: {e}")
+
+
+def page_model_provider(win) -> dict:
+    """Page 5 — model provider selection. Returns {'provider': ..., 'api_key': ...}."""
+    _fill_bg(win)
+    h, w = win.getmaxyx()
+    amber  = curses.color_pair(_CA_AMBER)
+    bright = curses.color_pair(_CA_BRIGHT) | curses.A_BOLD
+    dim    = curses.color_pair(_CA_DIM)
+    selected = 0
+
+    def _draw():
+        _fill_bg(win)
+        _safe(win, 2, 4, "WHICH MODEL DO YOU WANT TO USE?", bright)
+        _safe(win, 3, 4, "─" * min(50, w - 8), dim)
+        for i, (_, label) in enumerate(_PROVIDERS):
+            attr = amber | curses.A_BOLD if i == selected else amber
+            prefix = "▶ " if i == selected else "  "
+            _safe(win, 5 + i, 4, prefix + label, attr)
+        _safe(win, 6 + len(_PROVIDERS), 4,
+              "↑↓ move   Enter select", dim)
+        win.refresh()
+
+    while True:
+        _draw()
+        key = win.getch()
+        if key == curses.KEY_UP and selected > 0:
+            selected -= 1
+        elif key == curses.KEY_DOWN and selected < len(_PROVIDERS) - 1:
+            selected += 1
+        elif key in (curses.KEY_ENTER, 10, 13):
+            provider, _ = _PROVIDERS[selected]
+            if provider == "ollama":
+                return {"provider": "ollama", "api_key": ""}
+            return _page_enter_api_key(win, provider)
+
+
+def _page_enter_api_key(win, provider: str) -> dict:
+    """Sub-page: enter API key."""
+    h, w = win.getmaxyx()
+    env_key = _PROVIDER_ENV_KEYS.get(provider, "API_KEY")
+    hint    = _PROVIDER_HINTS.get(provider, "")
+    amber  = curses.color_pair(_CA_AMBER)
+    bright = curses.color_pair(_CA_BRIGHT) | curses.A_BOLD
+    dim    = curses.color_pair(_CA_DIM)
+    red    = curses.color_pair(_CA_RED)
+    buf    = []
+    curses.curs_set(1)
+
+    _fill_bg(win)
+    _safe(win, 2, 4, f"ENTER YOUR {env_key}", bright)
+    _safe(win, 3, 4, f"Hint: {hint}", dim)
+    _safe(win, 4, 4, "Stored encrypted in ~/.willow/vault.db", dim)
+    _safe(win, 6, 4, "Key: ", amber)
+    win.refresh()
+
+    while True:
+        key = win.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            api_key = "".join(buf).strip()
+            if not api_key:
+                _safe(win, 8, 4, "Key cannot be empty.", red)
+                win.refresh()
+                win.getch()
+                buf = []
+                _safe(win, 8, 4, "                    ", 0)
+                continue
+            curses.curs_set(0)
+            return {"provider": provider, "api_key": api_key}
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            if buf:
+                buf.pop()
+        elif 32 <= key <= 126:
+            buf.append(chr(key))
+        _safe(win, 6, 9, " " * max(1, w - 13), 0)
+        _safe(win, 6, 9, "*" * len(buf), amber)
+        win.refresh()
+
+
 def page_pgp_create(win) -> str:
     """PGP key creation for new users. Returns fingerprint."""
     _fill_bg(win)
@@ -1402,6 +1520,11 @@ def run_boot(stdscr):
         _blog("run_boot: page_path_select")
         path = page_path_select(stdscr)
         _blog(f"run_boot: path={path}")
+
+        _blog("run_boot: page_model_provider")
+        model_result = page_model_provider(stdscr)
+        _blog(f"run_boot: model_provider={model_result.get('provider')}")
+        _save_model_provider(model_result["provider"], model_result["api_key"])
 
         _blog("run_boot: page_pgp_create")
         fingerprint = page_pgp_create(stdscr)
