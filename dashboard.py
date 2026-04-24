@@ -2484,7 +2484,7 @@ def _first_run_preset_picker() -> None:
 
 
 if __name__ == "__main__":
-    import boot as _boot
+    import canopy as _boot
     if "--skip-boot" not in sys.argv:
         if "--force-setup" in sys.argv:
             _boot.BOOT_CONFIG.unlink(missing_ok=True)
