@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "willow": {
-      "command": "/home/sean-campbell/github/willow-1.7/willow.sh",
+      "command": "/home/sean-campbell/github/willow-1.9/willow.sh",
       "env": {
         "WILLOW_STORE_ROOT": "/home/sean-campbell/.willow/store",
         "WILLOW_PG_DB": "willow",

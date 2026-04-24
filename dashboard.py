@@ -705,7 +705,7 @@ def _fmt_age(secs: int) -> str:
     return f"{secs // 3600}h"
 
 def _pg_connect():
-    """Connect to Postgres via Unix socket (peer auth) or WILLOW_DB_URL if set."""
+    """Open a fresh Postgres connection via Unix socket (peer auth) or WILLOW_DB_URL."""
     import psycopg2
     dsn = os.environ.get("WILLOW_DB_URL", "")
     if dsn:
@@ -716,9 +716,32 @@ def _pg_connect():
     )
 
 
+# Persistent connection reused across background refresh cycles.
+_pg_persistent: "object | None" = None
+_pg_persistent_lock = threading.Lock()
+
+
+def _get_pg_conn():
+    """Return the persistent Postgres connection, reconnecting if it has gone stale."""
+    global _pg_persistent
+    with _pg_persistent_lock:
+        if _pg_persistent is not None:
+            try:
+                _pg_persistent.cursor().execute("SELECT 1")
+                return _pg_persistent
+            except Exception:
+                try:
+                    _pg_persistent.close()
+                except Exception:
+                    pass
+                _pg_persistent = None
+        _pg_persistent = _pg_connect()
+        return _pg_persistent
+
+
 def fetch_postgres():
     try:
-        conn = _pg_connect()
+        conn = _get_pg_conn()
         cur  = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM public.knowledge")
         k = cur.fetchone()[0]
@@ -736,7 +759,6 @@ def fetch_postgres():
                      for r in cur.fetchall()]
         except Exception:
             kart, tasks = {}, []
-        conn.close()
         with DATA.lock:
             DATA.pg_knowledge = _fmt(k)
             DATA.pg_edges     = _fmt(e)
@@ -756,12 +778,13 @@ def fetch_grove():
     """Fetch Grove agents, channels, and routing decisions into DATA."""
     try:
         import grove_reader
+        conn = _get_pg_conn()
         cursor_recs = soil.all_records("willow/dashboard/channel_cursors")
         last_seen_ids = {r["channel"]: r["last_seen_id"]
                          for r in cursor_recs if "channel" in r and "last_seen_id" in r}
-        agents   = grove_reader.grove_agents()
-        channels = grove_reader.grove_channels(last_seen_ids=last_seen_ids)
-        routing  = grove_reader.routing_decisions()
+        agents   = grove_reader.grove_agents(conn=conn)
+        channels = grove_reader.grove_channels(conn=conn, last_seen_ids=last_seen_ids)
+        routing  = grove_reader.routing_decisions(conn=conn)
         with DATA.lock:
             DATA.grove_agents      = agents
             DATA.grove_channels    = channels
