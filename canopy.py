@@ -174,23 +174,29 @@ def check_environment() -> dict:
     """Probe each subsystem. Returns {name: (status, detail)}."""
     results = {}
 
-    # Postgres / LOAM
+    # Postgres / LOAM — subprocess avoids Unix-socket connect_timeout hang on peer auth
     try:
-        import psycopg2
-        dsn = os.environ.get("WILLOW_DB_URL", "")
-        if dsn:
-            conn = psycopg2.connect(dsn, connect_timeout=3)
+        pg_script = (
+            "import psycopg2, os, json;"
+            "conn=psycopg2.connect("
+            "  dbname=os.environ.get('WILLOW_PG_DB','willow'),"
+            "  user=os.environ.get('WILLOW_PG_USER',os.environ.get('USER','')),"
+            "  connect_timeout=3);"
+            "cur=conn.cursor();"
+            "cur.execute('SELECT COUNT(*) FROM public.knowledge');"
+            "print(cur.fetchone()[0]);"
+            "conn.close()"
+        )
+        r = subprocess.run(
+            [sys.executable, "-c", pg_script],
+            capture_output=True, text=True, timeout=5,
+            env=os.environ.copy(),
+        )
+        if r.returncode == 0:
+            count = int(r.stdout.strip())
+            results["LOAM / POSTGRES"] = ("ok", f"{count:,} atoms")
         else:
-            conn = psycopg2.connect(
-                dbname=os.environ.get("WILLOW_PG_DB", "willow"),
-                user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
-                connect_timeout=3,
-            )
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM public.knowledge")
-        count = cur.fetchone()[0]
-        conn.close()
-        results["LOAM / POSTGRES"] = ("ok", f"{count:,} atoms")
+            results["LOAM / POSTGRES"] = ("missing", r.stderr.strip()[:40])
     except Exception as e:
         results["LOAM / POSTGRES"] = ("missing", str(e)[:40])
 
@@ -362,19 +368,25 @@ def gpg_agent_has_key(fingerprint: str) -> bool:
 
 def page_boot_check(win) -> dict:
     """Page 0 — environment probe. Shown to all users on every launch."""
+    _blog("page_boot_check: fill_bg")
     _fill_bg(win)
     h, w = win.getmaxyx()
+    _blog(f"page_boot_check: terminal {w}x{h}")
     amber  = curses.color_pair(_CA_AMBER)  | curses.A_BOLD
     dim    = curses.color_pair(_CA_DIM)
     green  = curses.color_pair(_CA_GREEN)  | curses.A_BOLD
     red    = curses.color_pair(_CA_RED)    | curses.A_BOLD
     bright = curses.color_pair(_CA_BRIGHT) | curses.A_BOLD
 
+    _blog("page_boot_check: typewrite header")
     _typewrite(win, 1, 2, "WILLOW DASHBOARD", bright, delay=0.012)
+    _blog("page_boot_check: separator")
     _safe(win, 2, 2, "─" * min(60, w - 4), dim)
     time.sleep(0.2)
 
+    _blog("page_boot_check: check_environment start")
     env = check_environment()
+    _blog(f"page_boot_check: check_environment done — {list(env.keys())}")
     y = 4
     col_name = 4
     col_dots = 26
@@ -413,6 +425,7 @@ def page_boot_check(win) -> dict:
         _typewrite(win, y, 2, "STANDALONE MODE", amber, delay=0.01)
 
     win.refresh()
+    _blog("page_boot_check: done")
     return env
 
 
@@ -1369,7 +1382,7 @@ def run_boot(stdscr):
     # ── Page 0: Environment check (everyone) ─────────────────────────────────
     _blog("run_boot: page_boot_check")
     env = page_boot_check(stdscr)
-    _blog(f"run_boot: env={dict((k,v[0]) for k,v in env.items())}")
+    _blog(f"run_boot: env done — {dict((k,v[0]) for k,v in env.items())}")
 
     if is_new:
         # ── New user path ─────────────────────────────────────────────────────
@@ -1419,6 +1432,7 @@ def run_boot(stdscr):
         _blog(f"run_boot: returning user={agent_name} fp={'ok' if fingerprint else 'EMPTY'}")
 
         if fingerprint:
+            _blog("run_boot: gpg_agent_has_key check")
             _blog("run_boot: page_pgp_auth")
             authenticated = page_pgp_auth(stdscr, fingerprint, agent_name)
             _blog(f"run_boot: authenticated={authenticated}")
