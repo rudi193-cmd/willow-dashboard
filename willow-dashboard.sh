@@ -42,7 +42,7 @@ export WILLOW_PYTHON
 
 export WILLOW_STORE_ROOT="${WILLOW_STORE_ROOT:-${HOME}/.willow/store}"
 export WILLOW_SAFE_ROOT="${WILLOW_SAFE_ROOT:-${HOME}/SAFE/Applications}"
-export WILLOW_PG_DB="${WILLOW_PG_DB:-willow}"
+export WILLOW_PG_DB="${WILLOW_PG_DB:-willow_19}"
 export WILLOW_PG_USER="${WILLOW_PG_USER:-$(whoami)}"
 export WILLOW_AGENT_NAME="${WILLOW_AGENT_NAME:-heimdallr}"
 

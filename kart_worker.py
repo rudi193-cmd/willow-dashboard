@@ -291,7 +291,7 @@ def _pg_connect():
     if dsn:
         return psycopg2.connect(dsn)
     return psycopg2.connect(
-        dbname=os.environ.get("WILLOW_PG_DB", "willow"),
+        dbname=os.environ.get("WILLOW_PG_DB", "willow_19"),
         user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
     )
 
