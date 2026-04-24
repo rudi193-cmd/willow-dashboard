@@ -727,10 +727,10 @@ def fetch_postgres():
         cur.execute("SELECT COUNT(*) FROM public.entities")
         en = cur.fetchone()[0]
         try:
-            cur.execute("SELECT status, COUNT(*) FROM kart_task_queue GROUP BY status")
+            cur.execute("SELECT status, COUNT(*) FROM public.tasks GROUP BY status")
             kart = dict(cur.fetchall())
-            cur.execute("""SELECT task_id, status, task, created_at
-                           FROM kart_task_queue
+            cur.execute("""SELECT id, status, task, created_at
+                           FROM public.tasks
                            ORDER BY created_at DESC LIMIT 20""")
             tasks = [{"id": r[0], "status": r[1], "cmd": r[2][:40], "ts": str(r[3])[:16]}
                      for r in cur.fetchall()]
@@ -927,10 +927,10 @@ def _execute_confirm(card, action: dict, row: dict) -> None:
             conn = card_mod._pg_conn()
             cur  = conn.cursor()
             if key == "c":
-                cur.execute("UPDATE public.kart_task_queue SET status='cancelled' WHERE task_id=%s", (task_id,))
+                cur.execute("UPDATE public.tasks SET status='cancelled', updated_at=NOW() WHERE id=%s", (task_id,))
                 DATA.push_log(f"kart: cancelled {task_id}")
             elif key == "r":
-                cur.execute("UPDATE public.kart_task_queue SET status='pending' WHERE task_id=%s", (task_id,))
+                cur.execute("UPDATE public.tasks SET status='pending', updated_at=NOW() WHERE id=%s", (task_id,))
                 DATA.push_log(f"kart: retried {task_id}")
             conn.commit()
             conn.close()

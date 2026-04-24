@@ -299,16 +299,16 @@ def _pg_connect():
 def _claim_task(conn) -> dict | None:
     cur = conn.cursor()
     cur.execute("""
-        UPDATE kart_task_queue
-        SET status = 'running', started_at = NOW()
+        UPDATE public.tasks
+        SET status = 'running', updated_at = NOW()
         WHERE id = (
-            SELECT id FROM kart_task_queue
-            WHERE status = 'pending' AND agent = 'kart'
+            SELECT id FROM public.tasks
+            WHERE status = 'pending'
             ORDER BY created_at ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING task_id, task, submitted_by
+        RETURNING id, task, submitted_by
     """)
     row = cur.fetchone()
     conn.commit()
@@ -321,10 +321,10 @@ def _claim_task(conn) -> dict | None:
 def _complete_task(conn, task_id: str, result: dict, steps: int = 0) -> None:
     cur = conn.cursor()
     cur.execute("""
-        UPDATE kart_task_queue
-        SET status = 'complete', result = %s, steps = %s, completed_at = NOW()
-        WHERE task_id = %s
-    """, (json.dumps(result), steps, task_id))
+        UPDATE public.tasks
+        SET status = 'complete', result = %s, updated_at = NOW()
+        WHERE id = %s
+    """, (json.dumps(result), task_id))
     conn.commit()
     cur.close()
 
@@ -332,9 +332,9 @@ def _complete_task(conn, task_id: str, result: dict, steps: int = 0) -> None:
 def _fail_task(conn, task_id: str, error: str) -> None:
     cur = conn.cursor()
     cur.execute("""
-        UPDATE kart_task_queue
-        SET status = 'failed', result = %s, completed_at = NOW()
-        WHERE task_id = %s
+        UPDATE public.tasks
+        SET status = 'failed', result = %s, updated_at = NOW()
+        WHERE id = %s
     """, (json.dumps({"error": error}), task_id))
     conn.commit()
     cur.close()
