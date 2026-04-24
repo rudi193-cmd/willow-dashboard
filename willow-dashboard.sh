@@ -12,14 +12,14 @@ set -euo pipefail
 
 DASH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Find willow-1.7 root ──────────────────────────────────────────────────────
+# ── Find willow-1.9 root ──────────────────────────────────────────────────────
 # Check: env override → sibling directory → common locations
 if [[ -n "${WILLOW_ROOT:-}" ]] && [[ -f "${WILLOW_ROOT}/willow.sh" ]]; then
     : # already set
-elif [[ -f "${DASH_ROOT}/../willow-1.7/willow.sh" ]]; then
-    WILLOW_ROOT="$(cd "${DASH_ROOT}/../willow-1.7" && pwd)"
-elif [[ -f "${HOME}/github/willow-1.7/willow.sh" ]]; then
-    WILLOW_ROOT="${HOME}/github/willow-1.7"
+elif [[ -f "${DASH_ROOT}/../willow-1.9/willow.sh" ]]; then
+    WILLOW_ROOT="$(cd "${DASH_ROOT}/../willow-1.9" && pwd)"
+elif [[ -f "${HOME}/github/willow-1.9/willow.sh" ]]; then
+    WILLOW_ROOT="${HOME}/github/willow-1.9"
 else
     WILLOW_ROOT=""
 fi
